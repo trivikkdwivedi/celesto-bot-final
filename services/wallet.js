@@ -1,54 +1,75 @@
-// services/wallet.js
-import { Keypair } from "@solana/web3.js";
-import { encryptText, decryptText } from "../utils/encrypt.js";
-import { getDB } from "./db.js";
+const { Keypair, Connection, PublicKey } = require("@solana/web3.js");
+const crypto = require("crypto");
+const mongoose = require("mongoose");
 
-/**
- * For development only:
- * - Creates a Solana Keypair
- * - Stores publicKey + encrypted secret in MongoDB if configured
- * - Returns publicKey + secretBase64 (only immediately after creation)
- */
+let walletModel = null;
+let encryptionKey = null;
 
-export async function createWalletForUser(userId) {
+function encrypt(text) {
+  const cipher = crypto.createCipheriv(
+    "aes-256-ecb",
+    Buffer.from(encryptionKey),
+    null
+  );
+  return Buffer.concat([cipher.update(text), cipher.final()]).toString("hex");
+}
+
+function decrypt(hex) {
+  const decipher = crypto.createDecipheriv(
+    "aes-256-ecb",
+    Buffer.from(encryptionKey),
+    null
+  );
+  return Buffer.concat([
+    decipher.update(Buffer.from(hex, "hex")),
+    decipher.final(),
+  ]).toString();
+}
+
+async function init({ encryptionKey: key, mongoUri }) {
+  if (!key) throw new Error("ENCRYPTION_KEY missing");
+  encryptionKey = key;
+
+  if (mongoUri) {
+    const schema = new mongoose.Schema({
+      ownerId: String,
+      publicKey: String,
+      secretKey: String,
+    });
+    walletModel = mongoose.model("Wallet", schema);
+  }
+}
+
+async function createWallet({ ownerId }) {
+  if (!walletModel) throw new Error("Mongo not enabled");
+
   const kp = Keypair.generate();
-  const secretBase64 = Buffer.from(kp.secretKey).toString("base64");
-  const encrypted = encryptText(secretBase64);
+  const pub = kp.publicKey.toBase58();
+  const enc = encrypt(Buffer.from(kp.secretKey).toString("base64"));
 
-  // if DB present, store
-  try {
-    const db = getDB();
-    const coll = db.collection("wallets");
-    await coll.updateOne(
-      { userId },
-      { $set: { userId, publicKey: kp.publicKey.toBase58(), encryptedSecret: encrypted } },
-      { upsert: true }
-    );
-  } catch (e) {
-    // No DB -> fallback to local file (NOT recommended)
-    // Optionally write to wallets.json or skip
-    console.warn("Wallet not persisted to DB:", e.message ?? e);
-  }
+  await walletModel.create({
+    ownerId,
+    publicKey: pub,
+    secretKey: enc,
+  });
 
-  return { publicKey: kp.publicKey.toBase58(), secretBase64 };
+  return { publicKey: pub };
 }
 
-export async function getWalletForUser(userId) {
-  try {
-    const db = getDB();
-    const doc = await db.collection("wallets").findOne({ userId });
-    if (!doc) return null;
-    const secretBase64 = decryptText(doc.encryptedSecret);
-    return { publicKey: doc.publicKey, secretBase64 };
-  } catch (e) {
-    console.warn("getWalletForUser failed:", e?.message ?? e);
-    return null;
-  }
+async function getWallet(ownerId) {
+  if (!walletModel) return null;
+  return await walletModel.findOne({ ownerId });
 }
 
-// For admin
-export async function listAllWallets() {
-  const db = getDB();
-  const rows = await db.collection("wallets").find({}).toArray();
-  return rows.map(r => ({ userId: r.userId, publicKey: r.publicKey }));
-       }
+async function getSolBalance(pubkey) {
+  const connection = new Connection(process.env.SOLANA_RPC);
+  const bal = await connection.getBalance(new PublicKey(pubkey));
+  return bal / 1e9;
+}
+
+module.exports = {
+  init,
+  createWallet,
+  getWallet,
+  getSolBalance,
+};
