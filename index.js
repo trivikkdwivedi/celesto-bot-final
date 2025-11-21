@@ -64,13 +64,13 @@ function isAdmin(ctx) {
 // ----------------------------
 
 bot.start(async (ctx) => {
-  const name = ctx.from?.first_name  ctx.from?.username  'User';
+  const name = ctx.from?.first_name || ctx.from?.username || 'User';
   await ctx.reply(`Hi ${name}! I'm Celesto — a dev trading bot. Use /help to see commands.`);
 });
 
 bot.command('help', (ctx) => {
   ctx.reply(
-    `/start - start bot
+`/start - start bot
 /help - command list
 /ping - alive check
 /price [symbol] - get crypto price
@@ -129,6 +129,7 @@ bot.command('mywallet', async (ctx) => {
     const w = await walletService.getWallet(telegramId);
 
     if (!w) return ctx.reply('No wallet found.');
+
     ctx.reply(`Public key:\n${w.publicKey}`);
   } catch (err) {
     console.error('mywallet err:', err);
@@ -159,3 +160,4 @@ process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 // START BOT
 start();
+
