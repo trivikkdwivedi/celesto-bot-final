@@ -1,15 +1,9 @@
 {
   "name": "celesto-bot",
   "version": "1.0.0",
-  "description": "Celesto — Solana trading Telegram bot (development skeleton).",
-  "type": "module",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "NODE_ENV=development node index.js"
-  },
-  "engines": {
-    "node": ">=20"
   },
   "dependencies": {
     "@solana/web3.js": "^1.95.0",
