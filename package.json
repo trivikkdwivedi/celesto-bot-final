@@ -1,18 +1,15 @@
 {
   "name": "celesto-bot-final",
   "version": "1.0.0",
-  "description": "Celesto Telegram Trading Bot",
   "main": "index.js",
-  "type": "commonjs",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "axios": "^1.6.5",
-    "bs58": "^5.0.0",
-    "dotenv": "^16.4.5",
-    "mongoose": "^7.6.0",
-    "@solana/web3.js": "^1.95.3",
-    "telegraf": "^4.12.2"
+    "axios": "^1.6.0",
+    "dotenv": "^16.4.0",
+    "mongoose": "^7.5.0",
+    "@solana/web3.js": "^1.98.0",
+    "telegraf": "^4.15.0"
   }
 }
