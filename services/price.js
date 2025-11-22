@@ -1,16 +1,26 @@
-const axios = require("axios");
+const axios = require('axios');
 
 async function getPrice(symbol = "SOL") {
-  const src = process.env.PRICE_SOURCE || "coingecko";
+  try {
+    const idMap = {
+      SOL: "solana",
+      BTC: "bitcoin",
+      ETH: "ethereum",
+      USDT: "tether"
+    };
 
-  if (src === "coingecko") {
-    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${symbol.toLowerCase()}&vs_currencies=usd`;
+    const id = idMap[symbol.toUpperCase()];
+    if (!id) return null;
 
-    const r = await axios.get(url);
-    return r.data[symbol.toLowerCase()]?.usd;
+    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd`;
+
+    const response = await axios.get(url);
+    return response.data[id]?.usd || null;
+
+  } catch (err) {
+    console.error("Price error:", err);
+    return null;
   }
-
-  return null;
 }
 
 module.exports = { getPrice };
