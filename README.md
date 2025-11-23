@@ -1,46 +1,22 @@
-# Celesto Bot
+# Celesto Bot (Supabase + Railway)
 
-Celesto Bot — development-ready Telegram trading bot skeleton for Solana.  
-This repo is designed to be run in GitHub Codespaces for development and Railway for production hosting.
+## Setup (local / Railway / Supabase)
+1. Create a Supabase project.
+2. Create the `users` and `wallets` tables (run the SQL above).
+3. In Supabase → API, copy your `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
+4. Create a Railway project and add the repo.
+5. Add environment variables in Railway:
+   - TELEGRAM_BOT_TOKEN
+   - ADMIN_TELEGRAM_ID
+   - SUPABASE_URL
+   - SUPABASE_ANON_KEY
+   - ENCRYPTION_KEY (recommended 32+ chars)
+   - SOLANA_RPC (optional; default devnet)
+6. Deploy. Railway will run `npm install` and `npm start`.
 
-> IMPORTANT: This is a development skeleton. Do not use real funds until you replace placeholder trade implementations with audited DEX calls and secure key management.
+## Notes
+- Private keys are encrypted with ENCRYPTION_KEY before storing in Supabase.
+- `SUPABASE_ANON_KEY` is used here; do not use `service_role` on client side.
+- For production, tighten Supabase policies and consider using a server key stored securely.
 
-## Features
-- Telegram commands (start, createwallet, mywallet, price, buy, sell)
-- Devnet-ready wallet generation (Keypair)
-- Price fetcher (Coingecko default)
-- Placeholder trade service (demo)
-- Optional MongoDB support for user storage
-- AES-256-based encryption helper (configurable via ENCRYPTION_KEY)
 
-## Folder Structure
-## Quick start (Codespaces / Local)
-1. Copy .env.example → .env and fill values.
-2. npm install
-3. npm start
-
-### Railway deployment
-1. Push repo to GitHub.
-2. Create Railway project → Deploy from GitHub → select celesto-bot.
-3. In Railway Project → Environment → add .env keys (TELEGRAM_BOT_TOKEN, etc).
-4. Set Start Command: node index.js
-5. Deploy and check logs.
-
-## Commands
-- /start - welcome
-- /createwallet - create devnet wallet (secret returned; **do not use with real funds**)
-- /mywallet - show public key
-- /price - get SOL price
-- /buy <usd> - simulated buy
-- /sell <amount> - simulated sell
-- /admin <cmd> - admin commands (only ADMIN_TELEGRAM_ID)
-
-## Next steps
-- Integrate Jupiter or Raydium swaps for real trading
-- Replace simple wallet storage with encrypted DB or secrets manager
-- Add rate-limiting, monitoring, and safety checks
-
----
-
-Local reference image path (uploaded earlier):
-/mnt/data/IMG_701AE3E8-A362-44C7-BBD5-1519170BA69F.jpeg
