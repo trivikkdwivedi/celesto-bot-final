@@ -1,44 +1,50 @@
-// services/token.js
 const axios = require("axios");
 
+// Correct SOL mint
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 
 /**
- * Manual SOL entry
- */
-function resolveSOL() {
-  return {
-    symbol: "SOL",
-    name: "Solana",
-    address: SOL_MINT
-  };
-}
-
-/**
- * Resolve token by name, symbol, or mint.
- * Uses Jupiter Token List.
+ * Resolve a token query (symbol, name, mint) into metadata
  */
 async function resolve(query) {
   if (!query) return null;
 
   query = query.trim().toUpperCase();
 
-  // --- Handle SOL manually ---
-  if (query === "SOL" || query === SOL_MINT.toUpperCase()) {
-    return resolveSOL();
+  // -----------------------------
+  // 1. Hard-code native SOL
+  // -----------------------------
+  if (query === "SOL") {
+    return {
+      symbol: "SOL",
+      name: "Solana",
+      address: SOL_MINT,
+    };
   }
 
+  // -----------------------------
+  // 2. If user pastes a mint address
+  // -----------------------------
+  if (query.length > 30) {
+    return {
+      symbol: query.slice(0, 5),
+      name: query,
+      address: query,
+    };
+  }
+
+  // -----------------------------
+  // 3. Jupiter token list lookup
+  // -----------------------------
   try {
-    // Jupiter token list (fast + reliable)
-    const res = await axios.get("https://tokens.jup.ag/tokens", { timeout: 7000 });
-    const list = res.data;
+    const listRes = await axios.get("https://token.jup.ag/all", {
+      timeout: 7000,
+    });
 
-    if (!Array.isArray(list)) return null;
+    const list = listRes.data;
 
-    // Match by symbol or mint
     const token = list.find(
       (t) =>
-        t.address.toUpperCase() === query ||
         t.symbol?.toUpperCase() === query ||
         t.name?.toUpperCase() === query
     );
@@ -48,10 +54,10 @@ async function resolve(query) {
     return {
       symbol: token.symbol,
       name: token.name,
-      address: token.address
+      address: token.address,
     };
   } catch (err) {
-    console.error("tokenService.resolve error:", err.message);
+    console.error("Token resolve error:", err.message);
     return null;
   }
 }
