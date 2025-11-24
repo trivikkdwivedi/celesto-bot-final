@@ -35,4 +35,4 @@ async function priceCommand(ctx) {
   }
 }
 
-module.exports = priceCommand;
+module.exports = priceCommand; 
