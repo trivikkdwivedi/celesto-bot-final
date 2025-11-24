@@ -37,4 +37,4 @@ async function getPrice(mint) {
   return p;
 }
 
-module.exports = { getPrice };
+module.exports = { getPrice }; 
