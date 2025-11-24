@@ -22,17 +22,25 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
+if (!WEBHOOK_URL) {
+  console.error("❌ Missing WEBHOOK_URL");
+  process.exit(1);
+}
+
 const bot = new Telegraf(BOT_TOKEN);
 
+/**
+ * Initialize all services
+ */
 async function startApp() {
   try {
-    // Init Supabase
+    // Initialize Supabase
     await dbService.init({
       supabaseUrl: SUPABASE_URL,
       supabaseKey: SUPABASE_ANON_KEY,
     });
 
-    // Init wallet service
+    // Initialize wallet encryption + RPC
     await walletService.init({
       supabase: dbService.supabase,
       encryptionKey: ENCRYPTION_KEY,
@@ -40,15 +48,22 @@ async function startApp() {
     });
 
     console.log("Supabase initialized");
-    console.log("Services initialized.");
+    console.log("Services initialized");
+
+    /**
+     * BOT COMMANDS
+     */
 
     // /start
-    bot.start((ctx) => {
+    bot.start(async (ctx) => {
       const name = ctx.from?.first_name || ctx.from?.username || "User";
-      ctx.reply(`👋 Welcome ${name}!\n\nUse /help to see available commands.`);
+      ctx.reply(
+        `👋 Welcome ${name}!\n\nUse /help to see available commands.`
+      );
     });
 
-    bot.help((ctx) => {
+    // /help
+    bot.command("help", (ctx) => {
       ctx.reply(
         `📘 **Commands**
 
@@ -64,6 +79,7 @@ All swaps are powered by **Jupiter**.`,
       );
     });
 
+    // /createwallet
     bot.command("createwallet", async (ctx) => {
       try {
         const telegramId = String(ctx.from.id);
@@ -81,7 +97,7 @@ All swaps are powered by **Jupiter**.`,
         });
 
         ctx.reply(
-          `✅ Wallet created!\nPublic key:\n\`${created.publicKey}\``,
+          `✅ Wallet created!\n\nPublic key:\n\`${created.publicKey}\``,
           { parse_mode: "Markdown" }
         );
       } catch (err) {
@@ -90,6 +106,7 @@ All swaps are powered by **Jupiter**.`,
       }
     });
 
+    // /mywallet
     bot.command("mywallet", async (ctx) => {
       try {
         const wallet = await walletService.getWallet(String(ctx.from.id));
@@ -107,15 +124,20 @@ All swaps are powered by **Jupiter**.`,
       }
     });
 
+    // /balance
     bot.command("balance", async (ctx) => {
       try {
         const wallet = await walletService.getWallet(String(ctx.from.id));
-        if (!wallet) return ctx.reply("❌ No wallet found.");
+        if (!wallet) {
+          return ctx.reply("❌ No wallet found. Use /createwallet");
+        }
 
         const sol = await walletService.getSolBalance(wallet.publicKey);
 
         ctx.reply(
-          `💰 Balance:\n\`${wallet.publicKey}\`\n\n${sol.toFixed(6)} SOL`,
+          `💰 SOL Balance for:\n\`${wallet.publicKey}\`\n\n**${sol.toFixed(
+            6
+          )} SOL**`,
           { parse_mode: "Markdown" }
         );
       } catch (err) {
@@ -124,25 +146,44 @@ All swaps are powered by **Jupiter**.`,
       }
     });
 
-    bot.command("price", priceHandler);
-    bot.command("buy", buyHandler);
-    bot.command("sell", sellHandler);
+    // /price
+    bot.command("price", async (ctx) => {
+      return priceHandler(ctx);
+    });
 
-    // --- WEBHOOK MODE ---
-    if (!WEBHOOK_URL) {
-      console.error("❌ Missing WEBHOOK_URL in Railway!");
-      process.exit(1);
-    }
+    // /buy
+    bot.command("buy", async (ctx) => {
+      return buyHandler(ctx);
+    });
+
+    // /sell
+    bot.command("sell", async (ctx) => {
+      return sellHandler(ctx);
+    });
+
+    /**
+     * WEBHOOK MODE (Railway compatible)
+     */
 
     const app = express();
-    app.use(bot.webhookCallback("/bot"));
+    app.use(express.json());
 
-    const PORT = process.env.PORT || 3000;
+    // Set webhook on Telegram
     await bot.telegram.setWebhook(`${WEBHOOK_URL}/bot`);
 
-    app.listen(PORT, () => {
-      console.log("🚀 Bot running via webhook on port", PORT);
+    // Telegram will send updates here
+    app.post("/bot", (req, res) => {
+      bot.handleUpdate(req.body);
+      res.sendStatus(200);
     });
+
+    const PORT = process.env.PORT || 8080;
+    app.listen(PORT, () => {
+      console.log(`🚀 Webhook server running on port ${PORT}`);
+      console.log(`Webhook URL: ${WEBHOOK_URL}/bot`);
+    });
+
+    console.log("Webhook set! Bot is running.");
 
   } catch (err) {
     console.error("Startup error:", err);
@@ -151,4 +192,3 @@ All swaps are powered by **Jupiter**.`,
 }
 
 startApp();
-            
