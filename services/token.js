@@ -1,65 +1,77 @@
+// services/token.js — Unified token resolver for Solana
 const axios = require("axios");
 
-// Correct SOL mint
-const SOL_MINT = "So11111111111111111111111111111111111111112";
+let TOKEN_LIST = null;
+
+// Jupiter token list URL (Solana only)
+const TOKEN_LIST_URL = "https://tokens.jup.ag/tokens.json";
 
 /**
- * Resolve a token query (symbol, name, mint) into metadata
+ * Load Jupiter token list (cached in memory)
+ */
+async function loadTokenList() {
+  if (TOKEN_LIST) return TOKEN_LIST;
+
+  const res = await axios.get(TOKEN_LIST_URL, { timeout: 10000 });
+  TOKEN_LIST = res.data;
+
+  return TOKEN_LIST;
+}
+
+/**
+ * Detect if string is a Solana mint/CA (base58 & 32 bytes)
+ */
+function looksLikeMint(str) {
+  return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(str);
+}
+
+/**
+ * Main resolver
+ * Supports:
+ *  - token symbol (SOL, BONK)
+ *  - token name (Solana, Bonk)
+ *  - CA/mint address
  */
 async function resolve(query) {
   if (!query) return null;
 
-  query = query.trim().toUpperCase();
+  const q = query.trim().toLowerCase();
 
-  // -----------------------------
-  // 1. Hard-code native SOL
-  // -----------------------------
-  if (query === "SOL") {
-    return {
-      symbol: "SOL",
-      name: "Solana",
-      address: SOL_MINT,
-    };
-  }
+  const list = await loadTokenList();
 
-  // -----------------------------
-  // 2. If user pastes a mint address
-  // -----------------------------
-  if (query.length > 30) {
+  // 1. Direct mint address
+  if (looksLikeMint(query)) {
+    const match = list.find(t => t.address.toLowerCase() === q);
+
+    if (match) return match;
+
+    // If mint not in list, return minimal metadata:
     return {
-      symbol: query.slice(0, 5),
-      name: query,
       address: query,
+      symbol: query.slice(0, 4).toUpperCase(),
+      name: query
     };
   }
 
-  // -----------------------------
-  // 3. Jupiter token list lookup
-  // -----------------------------
-  try {
-    const listRes = await axios.get("https://token.jup.ag/all", {
-      timeout: 7000,
-    });
+  // 2. Symbol match (exact)
+  let bySymbol = list.find(t => t.symbol.toLowerCase() === q);
+  if (bySymbol) return bySymbol;
 
-    const list = listRes.data;
+  // 3. Name match (exact)
+  let byName = list.find(t => t.name.toLowerCase() === q);
+  if (byName) return byName;
 
-    const token = list.find(
-      (t) =>
-        t.symbol?.toUpperCase() === query ||
-        t.name?.toUpperCase() === query
-    );
+  // 4. Partial name/symbol match
+  let partial = list.find(
+    t =>
+      t.symbol.toLowerCase().includes(q) ||
+      t.name.toLowerCase().includes(q)
+  );
 
-    if (!token) return null;
+  if (partial) return partial;
 
-    return {
-      symbol: token.symbol,
-      name: token.name,
-      address: token.address,
-    };
-  } catch (err) {
-    console.error("Token resolve error:", err.message);
-    return null;
-  }
+  // 5. Nothing found
+  return null;
 }
 
 module.exports = {
