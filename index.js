@@ -1,160 +1,176 @@
-require('dotenv').config();
-const { Telegraf } = require('telegraf');
+require("dotenv").config();
+const { Telegraf } = require("telegraf");
 
-const dbService = require('./services/db');
-const walletService = require('./services/wallet');
-const priceService = require('./services/price');
+// Services
+const dbService = require("./services/db");
+const walletService = require("./services/wallet");
+const priceHandler = require("./handlers/price");
+const buyHandler = require("./handlers/buy");
+const sellHandler = require("./handlers/sell");
 
+// ENV
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const ADMIN_ID = process.env.ADMIN_TELEGRAM_ID && String(process.env.ADMIN_TELEGRAM_ID);
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
+const SOLANA_RPC = process.env.SOLANA_RPC;
 
 if (!BOT_TOKEN) {
-  console.error('Missing TELEGRAM_BOT_TOKEN in env');
+  console.error("❌ Missing TELEGRAM_BOT_TOKEN");
   process.exit(1);
 }
+
 const bot = new Telegraf(BOT_TOKEN);
 
-// helper
-function isAdmin(ctx){
-  try { return ADMIN_ID && String(ctx.from.id) === ADMIN_ID; } catch(e){ return false; }
-}
-
-async function startApp(){
+/**
+ * Initialize all services
+ */
+async function startApp() {
   try {
-    const supUrl = process.env.SUPABASE_URL;
-    const supKey = process.env.SUPABASE_ANON_KEY;
+    // Initialize Supabase
+    await dbService.init({
+      supabaseUrl: SUPABASE_URL,
+      supabaseKey: SUPABASE_ANON_KEY,
+    });
 
-    if (!supUrl || !supKey) {
-      console.log('SUPABASE not fully configured. Exiting.');
-      process.exit(1);
-    }
-
-    await dbService.init({ supabaseUrl: supUrl, supabaseKey: supKey });
-
+    // Initialize wallet encryption + RPC
     await walletService.init({
       supabase: dbService.supabase,
-      encryptionKey: process.env.ENCRYPTION_KEY,
-      solanaRpc: process.env.SOLANA_RPC
+      encryptionKey: ENCRYPTION_KEY,
+      solanaRpc: SOLANA_RPC,
     });
 
-    // bot commands
+    console.log("Services initialized.");
+
+    /**
+     * BOT COMMANDS
+     */
+
+    // /start
     bot.start(async (ctx) => {
-      const name = ctx.from?.first_name || ctx.from?.username || 'User';
-      await ctx.reply(`Welcome to Celesto Bot! Use /help`);
+      const name =
+        ctx.from?.first_name || ctx.from?.username || "User";
+      ctx.reply(
+        `👋 Welcome ${name}!\n\nUse /help to see available commands.`
+      );
     });
 
-    bot.command('help', (ctx) => {
-      ctx.reply(`/start - start
-/help - this help
-/ping - pong
-/price [SYMBOL] - price (SOL default)
-/createwallet - create Solana wallet (encrypted saved to Supabase)
-/mywallet - show public key
-/balance - SOL balance
-/broadcast <message> - admin-only broadcast`);
+    // /help
+    bot.command("help", (ctx) => {
+      ctx.reply(
+        `📘 **Commands**
+
+/createwallet — Create a secure encrypted wallet
+/mywallet — Show your wallet public key
+/balance — Show your SOL balance
+/price <token> — Get token price via Jupiter
+/buy <input> <output> <amount> — Swap tokens
+/sell <input> <output> <amount> — Swap tokens (reverse)
+
+All swaps are powered by **Jupiter**.
+`,
+        { parse_mode: "Markdown" }
+      );
     });
 
-    bot.command('ping', ctx => ctx.reply('pong'));
-
-    bot.command('price', async (ctx) => {
-      try {
-        const parts = ctx.message.text.trim().split(/\s+/);
-        const symbol = (parts[1] || 'SOL').toUpperCase();
-        const p = await priceService.getPrice(symbol);
-        if (!p) return ctx.reply('Price not found');
-        ctx.reply(`${symbol} price: $${Number(p).toFixed(6)}`);
-      } catch (err) {
-        console.error('price err', err);
-        ctx.reply('Price fetch failed');
-      }
-    });
-
-    bot.command('createwallet', async (ctx) => {
+    // /createwallet
+    bot.command("createwallet", async (ctx) => {
       try {
         const telegramId = String(ctx.from.id);
-        const key = process.env.ENCRYPTION_KEY;
-        if (!key) return ctx.reply('Server missing ENCRYPTION_KEY env variable.');
 
         const existing = await walletService.getWallet(telegramId);
-        if (existing) return ctx.reply(`You already have a wallet:\n${existing.publicKey}`);
-
-        const created = await walletService.createWallet({ ownerId: telegramId });
-        return ctx.reply(`Wallet created.\nPublic key:\n${created.publicKey}`);
-      } catch (err) {
-        console.error('createwallet', err);
-        ctx.reply('Failed to create wallet.');
-      }
-    });
-
-    bot.command('mywallet', async (ctx) => {
-      try {
-        const telegramId = String(ctx.from.id);
-        const w = await walletService.getWallet(telegramId);
-        if (!w) return ctx.reply('No wallet found. Use /createwallet');
-        ctx.reply(`Public key:\n${w.publicKey}`);
-      } catch (err) {
-        console.error('mywallet err', err);
-        ctx.reply('Error retrieving wallet.');
-      }
-    });
-
-    bot.command('balance', async (ctx) => {
-      try {
-        const telegramId = String(ctx.from.id);
-        const w = await walletService.getWallet(telegramId);
-        if (!w) return ctx.reply('No wallet found. Use /createwallet');
-        const bal = await walletService.getSolBalance(w.publicKey);
-        ctx.reply(`SOL balance for ${w.publicKey}:\n${Number(bal).toFixed(6)} SOL`);
-      } catch (err) {
-        console.error('balance err', err);
-        ctx.reply('Failed to fetch balance.');
-      }
-    });
-
-    // admin broadcast
-    bot.command('broadcast', async (ctx) => {
-      if (!isAdmin(ctx)) return ctx.reply('Not allowed.');
-      const message = ctx.message.text.split(' ').slice(1).join(' ');
-      if (!message) return ctx.reply('Provide message text to broadcast.');
-      try {
-        const users = await dbService.getAllUsers();
-        let count = 0;
-        for (const u of users) {
-          try {
-            await bot.telegram.sendMessage(u.telegramId, message);
-            count++;
-          } catch(e){
-            console.warn('broadcast send fail', e?.message);
-          }
+        if (existing) {
+          return ctx.reply(
+            `⚠️ You already have a wallet:\n\`${existing.publicKey}\``,
+            { parse_mode: "Markdown" }
+          );
         }
-        ctx.reply(`Broadcast attempted to ${count} users.`);
+
+        const created = await walletService.createWallet({
+          ownerId: telegramId,
+        });
+
+        ctx.reply(
+          `✅ Wallet created!\n\nPublic key:\n\`${created.publicKey}\``,
+          { parse_mode: "Markdown" }
+        );
       } catch (err) {
-        console.error('broadcast err', err);
-        ctx.reply('Broadcast failed.');
+        console.error("createwallet error:", err);
+        ctx.reply("❌ Failed to create wallet.");
       }
     });
 
-    // track simple user table
-    bot.on('message', async (ctx,next) => {
+    // /mywallet
+    bot.command("mywallet", async (ctx) => {
       try {
-        const id = String(ctx.from?.id);
-        await dbService.upsertUser({ telegramId: id, username: ctx.from?.username || null, firstName: ctx.from?.first_name || null });
-      } catch (err){
-        console.warn('user track warning', err?.message);
-      } finally {
-        return next();
+        const wallet = await walletService.getWallet(
+          String(ctx.from.id)
+        );
+        if (!wallet) {
+          return ctx.reply(
+            "❌ No wallet found. Create one with /createwallet"
+          );
+        }
+
+        ctx.reply(
+          `🔑 Your wallet address:\n\`${wallet.publicKey}\``,
+          { parse_mode: "Markdown" }
+        );
+      } catch (err) {
+        console.error("mywallet error:", err);
+        ctx.reply("❌ Failed to fetch wallet.");
       }
     });
 
-    // start
+    // /balance
+    bot.command("balance", async (ctx) => {
+      try {
+        const wallet = await walletService.getWallet(String(ctx.from.id));
+        if (!wallet) {
+          return ctx.reply("❌ No wallet found. Use /createwallet");
+        }
+
+        const sol = await walletService.getSolBalance(wallet.publicKey);
+
+        ctx.reply(
+          `💰 SOL Balance for:\n\`${wallet.publicKey}\`\n\n**${sol.toFixed(6)} SOL**`,
+          { parse_mode: "Markdown" }
+        );
+      } catch (err) {
+        console.error("balance error:", err);
+        ctx.reply("❌ Failed to fetch SOL balance.");
+      }
+    });
+
+    // /price
+    bot.command("price", async (ctx) => {
+      return priceHandler(ctx);
+    });
+
+    // /buy
+    bot.command("buy", async (ctx) => {
+      return buyHandler(ctx);
+    });
+
+    // /sell
+    bot.command("sell", async (ctx) => {
+      return sellHandler(ctx);
+    });
+
+    /**
+     * Start bot
+     */
     await bot.launch();
-    console.log('Celesto Bot started');
-    process.once('SIGINT', () => bot.stop('SIGINT'));
-    process.once('SIGTERM', () => bot.stop('SIGTERM'));
+    console.log("🚀 Celesto Bot started!");
+
+    // Graceful shutdown
+    process.once("SIGINT", () => bot.stop("SIGINT"));
+    process.once("SIGTERM", () => bot.stop("SIGTERM"));
   } catch (err) {
-    console.error('startup err', err);
+    console.error("Startup error:", err);
     process.exit(1);
   }
 }
 
 startApp();
+    
