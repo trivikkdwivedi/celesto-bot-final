@@ -1,39 +1,91 @@
-// services/db.js - minimal supabase helpers (CommonJS)
-const { createClient } = require('@supabase/supabase-js');
+// services/db.js — Supabase helper layer for storing encrypted wallets
+const { createClient } = require("@supabase/supabase-js");
 
 let supabase = null;
 
-async function init({ supabaseUrl, supabaseKey }){
+/**
+ * Initialize Supabase
+ */
+async function init({ supabaseUrl, supabaseKey }) {
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error("Supabase URL + ANON KEY required");
+  }
+
   supabase = createClient(supabaseUrl, supabaseKey, {
-    auth: { persistSession: false }
+    auth: { persistSession: false },
   });
-  // optional: validate tables exist - we rely on you to create tables in Supabase GUI or run provided SQL
-  console.log('Supabase client created');
+
+  console.log("Supabase initialized");
 }
 
-async function upsertUser({ telegramId, username, firstName } = {}){
-  if (!supabase) throw new Error('Supabase not initialized');
+/**
+ * Store or update wallet (encrypted secret + public key)
+ * Table: wallets
+ * Columns:
+ * - telegram_id (text, primary)
+ * - public_key (text)
+ * - encrypted_secret (text)
+ */
+async function storeWallet({ telegramId, publicKey, encryptedSecret }) {
+  if (!supabase) throw new Error("Supabase not initialized");
+
   const payload = {
-    telegram_id: telegramId,
-    username,
-    first_name: firstName,
-    updated_at: new Date()
+    telegram_id: String(telegramId),
+    public_key: publicKey,
+    encrypted_secret: encryptedSecret,
   };
-  const { error } = await supabase.from('users').upsert(payload, { onConflict: 'telegram_id' });
+
+  const { data, error } = await supabase
+    .from("wallets")
+    .upsert(payload, { onConflict: "telegram_id" });
+
   if (error) throw error;
-  return true;
+
+  return data;
 }
 
-async function getAllUsers(){
-  if (!supabase) throw new Error('Supabase not initialized');
-  const { data, error } = await supabase.from('users').select('telegram_id');
+/**
+ * Fetch wallet record by Telegram ID
+ */
+async function getWalletByTelegram(telegramId) {
+  if (!supabase) throw new Error("Supabase not initialized");
+
+  const { data, error } = await supabase
+    .from("wallets")
+    .select("*")
+    .eq("telegram_id", String(telegramId))
+    .limit(1);
+
   if (error) throw error;
-  return (data || []).map(d => ({ telegramId: String(d.telegram_id) }));
+
+  return data?.[0] || null;
+}
+
+/**
+ * Fetch wallet record by public key
+ */
+async function getWalletByPublicKey(publicKey) {
+  if (!supabase) throw new Error("Supabase not initialized");
+
+  const { data, error } = await supabase
+    .from("wallets")
+    .select("*")
+    .eq("public_key", publicKey)
+    .limit(1);
+
+  if (error) throw error;
+
+  return data?.[0] || null;
 }
 
 module.exports = {
   init,
-  upsertUser,
-  getAllUsers,
-  get supabase(){ return supabase; }
+  storeWallet,
+  getWalletByTelegram,
+  getWalletByPublicKey,
+
+  // expose supabase client
+  get supabase() {
+    return supabase;
+  },
 };
