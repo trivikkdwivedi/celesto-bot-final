@@ -1,75 +1,130 @@
-// services/wallet.js
-const crypto = require('crypto');
-const { Keypair, Connection, LAMPORTS_PER_SOL } = require('@solana/web3.js');
+// services/wallet.js — Wallet creation, secure encryption, restore, SOL balance
+const crypto = require("crypto");
+const {
+  Keypair,
+  Connection,
+  PublicKey,
+  LAMPORTS_PER_SOL,
+} = require("@solana/web3.js");
 
-let supabaseClient = null;
-let ENC_KEY = null; // raw key buffer
+const db = require("./db");
+
+let ENC_KEY = null; // 32-byte AES key derived from ENCRYPTION_KEY
 let solConnection = null;
 
+/**
+ * Derive AES-256 key from ENCRYPTION_KEY
+ */
 function deriveKey(pass) {
-  // derive a 32 byte key from passphrase
-  return crypto.createHash('sha256').update(String(pass)).digest();
+  return crypto.createHash("sha256").update(String(pass)).digest();
 }
 
+/**
+ * Initialize wallet service
+ */
 async function init({ supabase, encryptionKey, solanaRpc }) {
-  supabaseClient = supabase;
-  if (!encryptionKey) throw new Error('ENCRYPTION_KEY required for wallet service');
+  if (!supabase) throw new Error("Supabase client missing");
+
+  if (!encryptionKey) {
+    throw new Error("ENCRYPTION_KEY required");
+  }
+
   ENC_KEY = deriveKey(encryptionKey);
-  solConnection = new Connection(solanaRpc || 'https://api.devnet.solana.com', 'confirmed');
+
+  solConnection = new Connection(
+    solanaRpc || process.env.SOLANA_RPC || "https://api.mainnet-beta.solana.com",
+    "confirmed"
+  );
 }
 
+/**
+ * Encrypt secret key using AES-256-GCM
+ */
 function encryptSecret(secretBytes) {
   const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', ENC_KEY, iv);
+  const cipher = crypto.createCipheriv("aes-256-gcm", ENC_KEY, iv);
+
   const encrypted = Buffer.concat([cipher.update(secretBytes), cipher.final()]);
   const tag = cipher.getAuthTag();
-  // store iv + tag + encrypted
-  return Buffer.concat([iv, tag, encrypted]).toString('base64');
+
+  return Buffer.concat([iv, tag, encrypted]).toString("base64");
 }
 
-function decryptSecret(payload) {
-  const b = Buffer.from(payload, 'base64');
-  const iv = b.slice(0, 12);
-  const tag = b.slice(12, 28);
-  const encrypted = b.slice(28);
-  const decipher = crypto.createDecipheriv('aes-256-gcm', ENC_KEY, iv);
+/**
+ * Decrypt secret key
+ */
+function decryptSecret(enc) {
+  const buf = Buffer.from(enc, "base64");
+
+  const iv = buf.slice(0, 12);
+  const tag = buf.slice(12, 28);
+  const ciphertext = buf.slice(28);
+
+  const decipher = crypto.createDecipheriv("aes-256-gcm", ENC_KEY, iv);
   decipher.setAuthTag(tag);
-  const out = Buffer.concat([decipher.update(encrypted), decipher.final()]);
-  return out; // Buffer
+
+  const decrypted = Buffer.concat([
+    decipher.update(ciphertext),
+    decipher.final(),
+  ]);
+
+  return decrypted;
 }
 
+/**
+ * Create a new Solana wallet and store encrypted secret in Supabase
+ */
 async function createWallet({ ownerId }) {
-  if (!supabaseClient) throw new Error('Supabase not initialized for wallet');
+  if (!ownerId) throw new Error("ownerId required");
+
   const kp = Keypair.generate();
-  const secret = kp.secretKey; // Buffer
-  const enc = encryptSecret(secret);
-  // store in wallets table
-  const { error } = await supabaseClient.from('wallets').insert([{
-    owner_telegram_id: ownerId,
-    public_key: kp.publicKey.toBase58(),
-    encrypted_secret: enc,
-    created_at: new Date()
-  }]);
-  if (error) throw error;
-  return { publicKey: kp.publicKey.toBase58() };
+
+  const encrypted = encryptSecret(Buffer.from(kp.secretKey));
+  await db.storeWallet({
+    telegramId: ownerId,
+    publicKey: kp.publicKey.toBase58(),
+    encryptedSecret: encrypted,
+  });
+
+  return {
+    publicKey: kp.publicKey.toBase58(),
+    encryptedSecret: encrypted,
+  };
 }
 
+/**
+ * Fetch wallet from Supabase
+ */
 async function getWallet(telegramId) {
-  if (!supabaseClient) throw new Error('Supabase not initialized for wallet');
-  const { data, error } = await supabaseClient.from('wallets').select('*').eq('owner_telegram_id', telegramId).limit(1).maybeSingle();
-  if (error) throw error;
-  return data || null;
+  const row = await db.getWalletByTelegram(String(telegramId));
+  if (!row) return null;
+
+  return {
+    publicKey: row.public_key,
+    encryptedSecret: row.encrypted_secret,
+  };
 }
 
+/**
+ * Convert encrypted secret to Keypair
+ */
+function keypairFromEncrypted(enc) {
+  const secret = decryptSecret(enc);
+  return Keypair.fromSecretKey(secret);
+}
+
+/**
+ * Get wallet's SOL balance
+ */
 async function getSolBalance(pubKeyString) {
-  if (!solConnection) solConnection = new Connection(process.env.SOLANA_RPC || 'https://api.devnet.solana.com', 'confirmed');
-  const balLamports = await solConnection.getBalance({ publicKey: require('@solana/web3.js').PublicKey.fromString(pubKeyString) });
-  return balLamports / LAMPORTS_PER_SOL;
+  const lamports = await solConnection.getBalance(new PublicKey(pubKeyString));
+  return lamports / LAMPORTS_PER_SOL;
 }
 
 module.exports = {
   init,
   createWallet,
   getWallet,
-  getSolBalance
+  getSolBalance,
+  keypairFromEncrypted,
 };
