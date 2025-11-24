@@ -1,79 +1,109 @@
-// services/token.js — Unified token resolver for Solana
+// services/token.js — Universal Solana Token Resolver
 const axios = require("axios");
 
-let TOKEN_LIST = null;
-
-// Jupiter token list URL (Solana only)
+let TOKEN_LIST = [];
 const TOKEN_LIST_URL = "https://tokens.jup.ag/tokens.json";
 
+// Correct SOL mint (wrapped SOL)
+const SOL_MINT = "So11111111111111111111111111111111111111112";
+
 /**
- * Load Jupiter token list (cached in memory)
+ * Load token list from Jupiter (cached)
  */
 async function loadTokenList() {
-  if (TOKEN_LIST) return TOKEN_LIST;
-
-  const res = await axios.get(TOKEN_LIST_URL, { timeout: 10000 });
-  TOKEN_LIST = res.data;
-
-  return TOKEN_LIST;
+  try {
+    const res = await axios.get(TOKEN_LIST_URL, { timeout: 8000 });
+    TOKEN_LIST = res.data || [];
+  } catch (err) {
+    console.error("Token list load error:", err.message);
+  }
 }
 
+// Load at startup
+loadTokenList();
+// Refresh every 5 minutes
+setInterval(loadTokenList, 5 * 60 * 1000);
+
 /**
- * Detect if string is a Solana mint/CA (base58 & 32 bytes)
+ * Detect if string is a Solana mint address (base58)
  */
-function looksLikeMint(str) {
+function isMintAddress(str) {
   return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(str);
 }
 
 /**
- * Main resolver
- * Supports:
- *  - token symbol (SOL, BONK)
- *  - token name (Solana, Bonk)
- *  - CA/mint address
+ * Main resolver: accepts
+ *  - token symbol (SOL)
+ *  - token name (Solana)
+ *  - mint/CA (So1111..)
  */
 async function resolve(query) {
   if (!query) return null;
 
-  const q = query.trim().toLowerCase();
+  query = query.trim();
 
-  const list = await loadTokenList();
+  const qLower = query.toLowerCase();
+  const qUpper = query.toUpperCase();
 
-  // 1. Direct mint address
-  if (looksLikeMint(query)) {
-    const match = list.find(t => t.address.toLowerCase() === q);
-
-    if (match) return match;
-
-    // If mint not in list, return minimal metadata:
+  // ------------------------------------
+  // 1. SOL manual override
+  // ------------------------------------
+  if (qUpper === "SOL") {
     return {
-      address: query,
-      symbol: query.slice(0, 4).toUpperCase(),
-      name: query
+      symbol: "SOL",
+      name: "Solana",
+      address: SOL_MINT,
     };
   }
 
-  // 2. Symbol match (exact)
-  let bySymbol = list.find(t => t.symbol.toLowerCase() === q);
+  // ------------------------------------
+  // 2. If looks like a CA (mint address)
+  // ------------------------------------
+  if (isMintAddress(query)) {
+    const token = TOKEN_LIST.find(
+      (t) => t.address.toLowerCase() === qLower
+    );
+
+    if (token) return token;
+
+    // Unknown mint → still return it
+    return {
+      symbol: query.slice(0, 4).toUpperCase(),
+      name: query,
+      address: query,
+    };
+  }
+
+  // ------------------------------------
+  // 3. Exact symbol match
+  // ------------------------------------
+  let bySymbol = TOKEN_LIST.find(
+    (t) => t.symbol.toLowerCase() === qLower
+  );
   if (bySymbol) return bySymbol;
 
-  // 3. Name match (exact)
-  let byName = list.find(t => t.name.toLowerCase() === q);
+  // ------------------------------------
+  // 4. Exact name match
+  // ------------------------------------
+  let byName = TOKEN_LIST.find(
+    (t) => t.name.toLowerCase() === qLower
+  );
   if (byName) return byName;
 
-  // 4. Partial name/symbol match
-  let partial = list.find(
-    t =>
-      t.symbol.toLowerCase().includes(q) ||
-      t.name.toLowerCase().includes(q)
+  // ------------------------------------
+  // 5. Partial match (symbol or name)
+  // ------------------------------------
+  let partial = TOKEN_LIST.find(
+    (t) =>
+      t.symbol.toLowerCase().includes(qLower) ||
+      t.name.toLowerCase().includes(qLower)
   );
-
   if (partial) return partial;
 
-  // 5. Nothing found
+  // ------------------------------------
+  // 6. No match
+  // ------------------------------------
   return null;
 }
 
-module.exports = {
-  resolve,
-};
+module.exports = { resolve };
