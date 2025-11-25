@@ -5,34 +5,44 @@ const priceService = require("../services/price");
 async function priceCommand(ctx) {
   try {
     const parts = ctx.message?.text?.split(/\s+/).slice(1) || [];
-    const query = parts.join(" ") || "SOL";
+    const rawQuery = parts.join(" ") || "SOL";
 
-    const token = await tokenService.resolve(query);
+    const token = await tokenService.resolve(rawQuery);
 
-    if (!token || !token.address) {
-      return ctx.reply(`❌ Could not resolve token: "${query}"`);
+    let mint;
+    let symbol = null;
+    if (!token) {
+      const maybe = rawQuery.trim();
+      mint = maybe;
+      symbol = maybe;
+    } else {
+      mint = token.address;
+      symbol = token.symbol || token.name || rawQuery;
     }
 
-    const price = await priceService.getPrice(token.address);
+    if (!mint) {
+      return ctx.reply(`❌ Could not resolve token: "${rawQuery}"`);
+    }
+
+    const price = await priceService.getPrice(mint, token);
 
     if (price === null) {
       return ctx.reply(
         `⚠️ No reliable market price for:\n` +
-        `• **${token.symbol || query}**\n` +
-        `• Mint: \`${token.address}\``
+          `• **${symbol || rawQuery}**\n` +
+          `• Mint: \`${mint}\``
       );
     }
 
     return ctx.reply(
-      `💰 **${token.symbol} Price**\n\n` +
-      `Mint: \`${token.address}\`\n` +
-      `Price: **$${Number(price).toFixed(6)} USD**`
+      `💰 **${(symbol || rawQuery).toString().toUpperCase()} Price**\n\n` +
+        `Mint: \`${mint}\`\n` +
+        `Price: **$${Number(price).toFixed(6)} USD**`
     );
-
   } catch (err) {
     console.error("priceCommand error:", err);
     return ctx.reply("⚠️ Failed to fetch price. Try again later.");
   }
 }
 
-module.exports = priceCommand; 
+module.exports = priceCommand;
