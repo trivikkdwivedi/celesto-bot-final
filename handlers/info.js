@@ -1,79 +1,43 @@
+// handlers/info.js — token overview using Birdeye token_overview
+const axios = require("axios");
 const tokenService = require("../services/token");
 const priceService = require("../services/price");
-const axios = require("axios");
+const { Markup } = require("telegraf");
 
-async function infoCommand(ctx) {
+const API_KEY = process.env.BIRDEYE_API_KEY;
+const BASE = process.env.BIRDEYE_BASE_URL || "https://public-api.birdeye.so";
+
+module.exports = async function infoCommand(ctx) {
   try {
-    const parts = ctx.message.text.split(/\s+/).slice(1);
-    const query = parts.join(" ").trim();
-
+    const parts = ctx.message?.text?.split(/\s+/).slice(1) || [];
+    const query = parts.join(" ");
     if (!query) return ctx.reply("ℹ️ Usage: /info <token>");
-
     const token = await tokenService.resolve(query);
-
-    if (!token) {
-      return ctx.reply(`❌ Unknown token: "${query}"`);
-    }
-
+    if (!token || !token.address) return ctx.reply(`❌ Could not find token: ${query}`);
     const mint = token.address;
-    const symbol = token.symbol || query.toUpperCase();
-
-    // -------------------------
-    // PRICE (from Jupiter)
-    // -------------------------
     const price = await priceService.getPrice(mint);
-
-    // -------------------------
-    // INFO FROM BIRDEYE
-    // -------------------------
-    let be = null;
-    try {
-      const r = await axios.get(
-        `https://public-api.birdeye.so/defi/token_overview?address=${mint}`,
-        {
-          headers: {
-            "x-chain": "solana",
-            "x-api-key": process.env.BIRDEYE_API || "",
-          },
-          timeout: 5000,
-        }
-      );
-      be = r.data?.data || null;
-    } catch (err) {
-      console.log("Birdeye error:", err.message);
-    }
-
-    const priceStr = price ? `$${price.toFixed(6)}` : "N/A";
-    const mcap = be?.market_cap ? `$${be.market_cap.toLocaleString()}` : "N/A";
-    const volume = be?.volume_24h ? `$${be.volume_24h.toLocaleString()}` : "N/A";
-    const fdv = be?.fdv ? `$${be.fdv.toLocaleString()}` : "N/A";
-    const change24 =
-      be?.price_change_24h != null
-        ? `${be.price_change_24h > 0 ? "🟢" : "🔴"} ${be.price_change_24h.toFixed(2)}%`
-        : "N/A";
-
-    const text =
-      `📘 *Token Info — ${symbol}*\n\n` +
-      `• *Name:* ${token.name || "N/A"}\n` +
-      `• *Symbol:* ${symbol}\n` +
-      `• *Mint:* \`${mint}\`\n\n` +
-      `💰 *Market Data:*\n` +
-      `• Price: *${priceStr}*\n` +
-      `• 24h Change: *${change24}*\n` +
-      `• Market Cap: *${mcap}*\n` +
-      `• 24h Volume: *${volume}*\n` +
-      `• FDV: *${fdv}*\n\n` +
+    const url = `${BASE}/defi/token_overview?address=${encodeURIComponent(mint)}`;
+    const res = await axios.get(url, { headers: { "X-API-KEY": API_KEY, accept: "application/json" }, timeout: 8000 });
+    const d = res.data?.data || {};
+    const mcap = d.marketCap ? `$${d.marketCap.toLocaleString()}` : "N/A";
+    const fdv = d.fdv ? `$${d.fdv.toLocaleString()}` : "N/A";
+    const liq = d.liquidity ? `$${d.liquidity.toLocaleString()}` : "N/A";
+    const vol24 = d.volume24h ? `$${d.volume24h.toLocaleString()}` : "N/A";
+    const change24 = (d.priceChange24h !== undefined && d.priceChange24h !== null) ? `${d.priceChange24h.toFixed(2)}%` : "N/A";
+    const msg =
+      `📊 *${token.name || token.symbol} (${token.symbol})*\n\n` +
+      `📌 *Mint:* \`${mint}\`\n\n` +
+      `💵 *Price:* ${price ? `$${price.toFixed(6)}` : "N/A"}\n` +
+      `💰 *Market Cap:* ${mcap}\n` +
+      `🏦 *FDV:* ${fdv}\n` +
+      `🧪 *Liquidity:* ${liq}\n` +
+      `📈 *24h Volume:* ${vol24}\n` +
+      `📉 *24h Change:* ${change24}\n\n` +
       `🔗 *Links:*\n` +
-      (token.extensions?.website ? `• Website: ${token.extensions.website}\n` : "") +
-      (token.extensions?.twitter ? `• Twitter: ${token.extensions.twitter}\n` : "") +
-      `• Solscan: https://solscan.io/token/${mint}\n`;
-
-    return ctx.reply(text, { parse_mode: "Markdown" });
+      `[Birdeye](https://birdeye.so/token/${mint}?chain=solana) | [DexScreener](https://dexscreener.com/solana/${mint})`;
+    return ctx.reply(msg, { parse_mode: "Markdown", ...Markup.inlineKeyboard([[Markup.button.callback("📈 Chart", `chart|${mint}|1D`)],[Markup.button.callback("🔁 Refresh Info", `info_refresh|${mint}`)]]) });
   } catch (err) {
-    console.error("info error:", err);
-    return ctx.reply("⚠️ Failed to fetch token info.");
+    console.error("infoCommand error:", err.message);
+    return ctx.reply("⚠️ Failed to load token info.");
   }
-}
-
-module.exports = infoCommand;
-  
+};
