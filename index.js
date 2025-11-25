@@ -1,3 +1,4 @@
+// index.js
 require("dotenv").config();
 const { Telegraf } = require("telegraf");
 const express = require("express");
@@ -23,7 +24,7 @@ if (!BOT_TOKEN) {
 }
 
 if (!WEBHOOK_URL) {
-  console.error("❌ Missing WEBHOOK_URL");
+  console.error("❌ Missing WEBHOOK_URL (set to your Railway app URL)");
   process.exit(1);
 }
 
@@ -57,24 +58,20 @@ async function startApp() {
     // /start
     bot.start(async (ctx) => {
       const name = ctx.from?.first_name || ctx.from?.username || "User";
-      ctx.reply(
-        `👋 Welcome ${name}!\n\nUse /help to see available commands.`
-      );
+      ctx.reply(`👋 Welcome ${name}!\n\nUse /help to see available commands.`);
     });
 
     // /help
     bot.command("help", (ctx) => {
       ctx.reply(
-        `📘 **Commands**
+        `📘 Commands:
 
 /createwallet — Create a secure encrypted wallet
 /mywallet — Show your wallet public key
 /balance — Show your SOL balance
-/price <token> — Get token price via Jupiter
-/buy <input> <output> <amount> — Swap tokens
-/sell <input> <output> <amount> — Swap tokens (reverse)
-
-All swaps are powered by **Jupiter**.`,
+/price <token> — Get token price (symbol, name or mint)
+*/buy* and */sell* — swap tokens (experimental)
+`,
         { parse_mode: "Markdown" }
       );
     });
@@ -114,10 +111,9 @@ All swaps are powered by **Jupiter**.`,
           return ctx.reply("❌ No wallet found. Use /createwallet");
         }
 
-        ctx.reply(
-          `🔑 Your wallet address:\n\`${wallet.publicKey}\``,
-          { parse_mode: "Markdown" }
-        );
+        ctx.reply(`🔑 Your wallet address:\n\`${wallet.publicKey}\``, {
+          parse_mode: "Markdown",
+        });
       } catch (err) {
         console.error("mywallet error:", err);
         ctx.reply("❌ Failed to fetch wallet.");
@@ -164,16 +160,17 @@ All swaps are powered by **Jupiter**.`,
     /**
      * WEBHOOK MODE (Railway compatible)
      */
-
     const app = express();
     app.use(express.json());
 
-    // Set webhook on Telegram
+    // Set webhook on Telegram (register)
     await bot.telegram.setWebhook(`${WEBHOOK_URL}/bot`);
 
     // Telegram will send updates here
     app.post("/bot", (req, res) => {
-      bot.handleUpdate(req.body);
+      bot.handleUpdate(req.body).catch((e) => {
+        console.error("handleUpdate error:", e);
+      });
       res.sendStatus(200);
     });
 
@@ -184,7 +181,6 @@ All swaps are powered by **Jupiter**.`,
     });
 
     console.log("Webhook set! Bot is running.");
-
   } catch (err) {
     console.error("Startup error:", err);
     process.exit(1);
