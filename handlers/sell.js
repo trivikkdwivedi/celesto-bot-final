@@ -1,9 +1,13 @@
-// handlers/sell.js
+// handlers/sell.js — safe simple guide
 module.exports = async function sellHandler(ctx) {
   try {
-    await ctx.reply("🔧 Sell is not yet enabled on this deploy. Coming soon.");
+    const text = ctx.message?.text?.split(/\s+/).slice(1) || [];
+    if (text.length < 3) {
+      return ctx.reply("Usage: /sell <INPUT_TOKEN_MINT_OR_SYMBOL> <OUTPUT_TOKEN> <AMOUNT>");
+    }
+    return ctx.reply("🔧 Sell flow is not enabled in this deploy. Use Sell button -> command example shown.");
   } catch (err) {
     console.error("sellHandler error:", err);
-    await ctx.reply("❌ Sell failed.");
+    return ctx.reply("❌ Sell failed.");
   }
 };
