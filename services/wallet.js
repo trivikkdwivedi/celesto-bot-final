@@ -1,4 +1,4 @@
-// services/wallet.js
+// services/wallet.js — wallet creation, AES-GCM encryption and Sol balance
 const crypto = require("crypto");
 const { Keypair, Connection, PublicKey, LAMPORTS_PER_SOL } = require("@solana/web3.js");
 const db = require("./db");
@@ -11,13 +11,9 @@ function deriveKey(pass) {
 }
 
 async function init({ supabase, encryptionKey, solanaRpc }) {
-  if (!supabase) throw new Error("Supabase client missing");
   if (!encryptionKey) throw new Error("ENCRYPTION_KEY required");
   ENC_KEY = deriveKey(encryptionKey);
-  solConnection = new Connection(
-    solanaRpc || process.env.SOLANA_RPC || "https://api.mainnet-beta.solana.com",
-    "confirmed"
-  );
+  solConnection = new Connection(solanaRpc || process.env.SOLANA_RPC || "https://api.mainnet-beta.solana.com", "confirmed");
 }
 
 function encryptSecret(secretBytes) {
@@ -43,24 +39,14 @@ async function createWallet({ ownerId }) {
   if (!ownerId) throw new Error("ownerId required");
   const kp = Keypair.generate();
   const encrypted = encryptSecret(Buffer.from(kp.secretKey));
-  await db.storeWallet({
-    telegramId: ownerId,
-    publicKey: kp.publicKey.toBase58(),
-    encryptedSecret: encrypted,
-  });
-  return {
-    publicKey: kp.publicKey.toBase58(),
-    encryptedSecret: encrypted,
-  };
+  await db.storeWallet({ telegramId: ownerId, publicKey: kp.publicKey.toBase58(), encryptedSecret: encrypted });
+  return { publicKey: kp.publicKey.toBase58(), encryptedSecret: encrypted };
 }
 
 async function getWallet(telegramId) {
   const row = await db.getWalletByTelegram(String(telegramId));
   if (!row) return null;
-  return {
-    publicKey: row.public_key,
-    encryptedSecret: row.encrypted_secret,
-  };
+  return { publicKey: row.public_key, encryptedSecret: row.encrypted_secret };
 }
 
 function keypairFromEncrypted(enc) {
@@ -73,10 +59,4 @@ async function getSolBalance(pubKeyString) {
   return lamports / LAMPORTS_PER_SOL;
 }
 
-module.exports = {
-  init,
-  createWallet,
-  getWallet,
-  getSolBalance,
-  keypairFromEncrypted,
-};
+module.exports = { init, createWallet, getWallet, getSolBalance, keypairFromEncrypted };
