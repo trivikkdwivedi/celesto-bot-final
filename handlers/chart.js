@@ -1,52 +1,38 @@
-// handlers/chart.js
-const axios = require("axios");
-const tokenService = require("../services/token");
-const { Markup } = require("telegraf");
 
-const API_KEY = process.env.BIRDEYE_API_KEY;
-const BASE_URL = "https://public-api.birdeye.so";
+const tokenService = require("../services/token");
+const chartService = require("../services/chart");
+const { InlineKeyboard } = require("telegraf");
 
 async function chartCommand(ctx) {
   try {
-    const parts = ctx.message.text.split(/\s+/).slice(1);
-    const query = parts.join(" ");
+    const q = ctx.message?.text?.split(" ").slice(1).join(" ");
+    if (!q) return ctx.reply("📉 Usage: /chart <token>");
 
-    if (!query) {
-      return ctx.reply("📈 Usage: /chart <token>");
+    const token = await tokenService.resolve(q);
+    if (!token) return ctx.reply(`❌ Unknown token: ${q}`);
+
+    const candles = await chartService.getChart(token.address);
+
+    if (!candles) {
+      return ctx.reply("⚠️ Failed to load chart.");
     }
 
-    const token = await tokenService.resolve(query);
-    if (!token) {
-      return ctx.reply(`❌ Token not found: ${query}`);
-    }
+    const points = candles.map(c => c.close).slice(-20);
+    const miniChart = points.map(p => "▇".repeat(Math.max(1, p / points[0]))).join("\n");
 
-    const mint = token.address;
-
-    // generate chart image from Birdeye
-    const chartUrl = `${BASE_URL}/defi/price_chart?address=${mint}&type=1D&width=800&height=500`;
-
-    // download chart
-    const chart = await axios.get(chartUrl, {
-      headers: { "X-API-KEY": API_KEY },
-      responseType: "arraybuffer",
-    });
-
-    return ctx.replyWithPhoto({ source: Buffer.from(chart.data) }, {
-      caption: `📊 *${token.symbol} Price Chart*\nMint: \`${mint}\``,
-      parse_mode: "Markdown",
-      ...Markup.inlineKeyboard([
-        [
-          Markup.button.callback("1H", `chart|${mint}|1H`),
-          Markup.button.callback("4H", `chart|${mint}|4H`),
-          Markup.button.callback("1D", `chart|${mint}|1D`),
-          Markup.button.callback("7D", `chart|${mint}|7D`),
-        ]
-      ])
-    });
+    return ctx.reply(
+      `📊 *${token.symbol} — Mini Chart (24H)*\n\n${miniChart}`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: new InlineKeyboard().row(
+          InlineKeyboard.text("↩ Back", "refresh_price:" + token.address)
+        )
+      }
+    );
 
   } catch (err) {
-    console.error("chart error:", err.message);
-    return ctx.reply("⚠️ Failed to load chart.");
+    console.log("chartCommand error:", err);
+    return ctx.reply("⚠️ Chart failed.");
   }
 }
 
