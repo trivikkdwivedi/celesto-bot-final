@@ -1,91 +1,144 @@
-// handlers/callbacks.js — handle Buy / Sell / Refresh callback_data
-const { Markup } = require("telegraf");
-const tokenService = require("../services/token");
+// handlers/callbacks.js — FINAL VERSION
+const axios = require("axios");
 const priceService = require("../services/price");
+const tokenService = require("../services/token");
+const { Markup } = require("telegraf");
 
-function buildKeyboard(mint, token) {
-  const chartUrl =
-    mint && mint !== "SOL"
-      ? `https://solscan.io/token/${mint}`
-      : `https://solscan.io/`;
+const API_KEY = process.env.BIRDEYE_API_KEY;
+const BASE_URL = process.env.BIRDEYE_BASE_URL || "https://public-api.birdeye.so";
+
+// Rebuild the inline keyboard for price output
+function priceKeyboard(mint) {
   return Markup.inlineKeyboard([
     [
       Markup.button.callback("🔁 Refresh", `refresh|${mint}`),
       Markup.button.callback("🛒 Buy", `buy|${mint}`),
       Markup.button.callback("📤 Sell", `sell|${mint}`)
     ],
-    [Markup.button.url("📈 Chart", chartUrl)]
+    [
+      Markup.button.callback("📈 Chart", `chart|${mint}|1D`)
+    ]
   ]);
 }
 
-module.exports = async (ctx) => {
+// Rebuild the inline keyboard for chart timeframe switching
+function chartKeyboard(mint) {
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback("1H", `chart|${mint}|1H`),
+      Markup.button.callback("4H", `chart|${mint}|4H`),
+      Markup.button.callback("1D", `chart|${mint}|1D`),
+      Markup.button.callback("7D", `chart|${mint}|7D`)
+    ]
+  ]);
+}
+
+module.exports = async function callbackHandler(ctx) {
   try {
-    const payload = ctx.callbackQuery?.data;
-    if (!payload) {
-      await ctx.answerCbQuery();
-      return;
-    }
+    const data = ctx.callbackQuery.data;
+    if (!data) return ctx.answerCbQuery();
 
-    await ctx.answerCbQuery(); // acknowledge quickly to remove loading
+    const parts = data.split("|");
+    const action = parts[0];
+    const mint = parts[1];
+    const timeframe = parts[2];
 
-    const [action, mintRaw] = payload.split("|");
-    const mint = mintRaw || "";
+    await ctx.answerCbQuery(); // remove the loading animation immediately
 
-    // Resolve token for nicer labels where possible
-    const token = await tokenService.getByMint(mint).catch(() => null);
-    const symbol = token?.symbol || (mint === "SOL" ? "SOL" : mint);
-
+    // =====================================================
+    // 🔁 REFRESH PRICE
+    // =====================================================
     if (action === "refresh") {
-      // fetch latest price and edit the message text in place
-      const price = await priceService.getPrice(mint, token);
-      const priceStr = price ? `$${Number(price).toFixed(6)}` : "N/A";
+      const token = await tokenService.resolve(mint);
+      const symbol = token?.symbol || "Token";
 
-      const text =
-        `💰 *${(symbol || mint).toString().toUpperCase()}*\n\n` +
-        `• *Mint:* \`${mint}\`\n` +
-        `• *Price:* **${priceStr}**\n`;
+      const price = await priceService.getPrice(mint);
+      const priceStr = price ? `$${price.toFixed(6)}` : "N/A";
+
+      const msg =
+        `💰 *${symbol}*\n\n` +
+        `• Mint: \`${mint}\`\n` +
+        `• Price: *${priceStr}*`;
 
       try {
-        // edit original message if possible
-        if (ctx.callbackQuery.message) {
-          await ctx.editMessageText(text, {
-            parse_mode: "Markdown",
-            ...buildKeyboard(mint, token)
-          });
-        } else {
-          await ctx.reply(text, { parse_mode: "Markdown", ...buildKeyboard(mint, token) });
-        }
+        return ctx.editMessageText(msg, {
+          parse_mode: "Markdown",
+          ...priceKeyboard(mint)
+        });
       } catch (err) {
         // fallback to replying if editing fails
-        await ctx.reply(text, { parse_mode: "Markdown", ...buildKeyboard(mint, token) });
+        return ctx.reply(msg, {
+          parse_mode: "Markdown",
+          ...priceKeyboard(mint)
+        });
       }
-      return;
     }
 
+    // =====================================================
+    // 📈 CHART DISPLAY / SWITCH TIMEFRAME
+    // =====================================================
+    if (action === "chart") {
+      const tf = timeframe || "1D"; // default 1D
+
+      const chartUrl =
+        `${BASE_URL}/defi/price_chart?address=${mint}` +
+        `&type=${tf}&width=800&height=500`;
+
+      try {
+        const chart = await axios.get(chartUrl, {
+          headers: { "X-API-KEY": API_KEY },
+          responseType: "arraybuffer"
+        });
+
+        const media = { source: Buffer.from(chart.data) };
+
+        return ctx.editMessageMedia(
+          { type: "photo", media },
+          {
+            caption: `📊 *Chart — ${tf}*\nMint: \`${mint}\``,
+            parse_mode: "Markdown",
+            ...chartKeyboard(mint)
+          }
+        );
+      } catch (err) {
+        console.error("Chart callback error:", err.message);
+        return ctx.reply("⚠️ Failed to load chart.");
+      }
+    }
+
+    // =====================================================
+    // 🛒 BUY QUICK GUIDE
+    // =====================================================
     if (action === "buy") {
-      // lightweight path — guide user to /buy with prefilled args
-      // Users will run the /buy command; you can enhance this to a full swap flow later.
-      const reply = `🛒 To buy *${symbol}*:\n` +
-        `Use the command:\n` +
-        `\`/buy ${mint} <YOUR_INPUT_TOKEN_MINT_OR_SYMBOL> <AMOUNT>\`\n\n` +
-        `Example: \`/buy SOL ${mint} 0.1\``;
-      await ctx.reply(reply, { parse_mode: "Markdown" });
-      return;
+      const reply =
+        `🛒 *Buy Command Guide*\n\n` +
+        `Use:\n` +
+        `\`/buy <INPUT_TOKEN> ${mint} <AMOUNT>\`\n\n` +
+        `Example:\n\`/buy SOL ${mint} 1\``;
+
+      return ctx.reply(reply, { parse_mode: "Markdown" });
     }
 
+    // =====================================================
+    // 📤 SELL QUICK GUIDE
+    // =====================================================
     if (action === "sell") {
-      const reply = `📤 To sell *${symbol}*:\n` +
-        `Use the command:\n` +
-        `\`/sell ${mint} <YOUR_OUTPUT_TOKEN_MINT_OR_SYMBOL> <AMOUNT>\`\n\n` +
-        `Example: \`/sell ${mint} SOL 1\``;
-      await ctx.reply(reply, { parse_mode: "Markdown" });
-      return;
+      const reply =
+        `📤 *Sell Command Guide*\n\n` +
+        `Use:\n` +
+        `\`/sell ${mint} <OUTPUT_TOKEN> <AMOUNT>\`\n\n` +
+        `Example:\n\`/sell ${mint} SOL 10000\``;
+
+      return ctx.reply(reply, { parse_mode: "Markdown" });
     }
 
-    // unknown action
-    await ctx.reply("⚠️ Unknown action");
+    // =====================================================
+    // UNKNOWN CALLBACK
+    // =====================================================
+    return ctx.reply("⚠️ Unknown action.");
+
   } catch (err) {
-    console.error("callback handler error:", err);
-    try { await ctx.answerCbQuery("Handler error"); } catch(e){/*ignore*/ }
+    console.error("callback error:", err);
+    return ctx.reply("⚠️ Callback failed.");
   }
 };
