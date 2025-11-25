@@ -1,6 +1,24 @@
-// handlers/price.js
+// handlers/price.js — polished + inline buttons (Buy / Sell / Refresh / Chart)
+const { Markup } = require("telegraf");
 const tokenService = require("../services/token");
 const priceService = require("../services/price");
+
+function buildKeyboard(mint, token) {
+  // Chart button uses Solscan token page (works for most tokens)
+  const chartUrl =
+    mint && mint !== "SOL"
+      ? `https://solscan.io/token/${mint}`
+      : `https://solscan.io/`; // fallback for SOL
+
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback("🔁 Refresh", `refresh|${mint}`),
+      Markup.button.callback("🛒 Buy", `buy|${mint}`),
+      Markup.button.callback("📤 Sell", `sell|${mint}`)
+    ],
+    [Markup.button.url("📈 Chart", chartUrl)]
+  ]);
+}
 
 async function priceCommand(ctx) {
   try {
@@ -10,14 +28,13 @@ async function priceCommand(ctx) {
     const token = await tokenService.resolve(rawQuery);
 
     let mint;
-    let symbol = null;
+    let symbol;
     if (!token) {
-      const maybe = rawQuery.trim();
-      mint = maybe;
-      symbol = maybe;
+      mint = rawQuery.trim();
+      symbol = rawQuery.toUpperCase();
     } else {
       mint = token.address;
-      symbol = token.symbol || token.name || rawQuery;
+      symbol = token.symbol || token.name || rawQuery.toUpperCase();
     }
 
     if (!mint) {
@@ -28,17 +45,23 @@ async function priceCommand(ctx) {
 
     if (price === null) {
       return ctx.reply(
-        `⚠️ No reliable market price for:\n` +
-          `• **${symbol || rawQuery}**\n` +
-          `• Mint: \`${mint}\``
+        `⚠️ No reliable market price for:\n• **${symbol}**\n• Mint: \`${mint}\``,
+        { parse_mode: "Markdown" }
       );
     }
 
-    return ctx.reply(
-      `💰 **${(symbol || rawQuery).toString().toUpperCase()} Price**\n\n` +
-        `Mint: \`${mint}\`\n` +
-        `Price: **$${Number(price).toFixed(6)} USD**`
-    );
+    const priceStr = `$${Number(price).toFixed(6)}`;
+
+    const text =
+      `💰 *${(symbol || rawQuery).toString().toUpperCase()}*\n\n` +
+      `• *Mint:* \`${mint}\`\n` +
+      `• *Price:* **${priceStr}**\n`;
+
+    // send message with inline keyboard
+    return ctx.reply(text, {
+      parse_mode: "Markdown",
+      ...buildKeyboard(mint, token)
+    });
   } catch (err) {
     console.error("priceCommand error:", err);
     return ctx.reply("⚠️ Failed to fetch price. Try again later.");
