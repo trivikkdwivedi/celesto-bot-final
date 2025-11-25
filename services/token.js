@@ -1,57 +1,113 @@
 // services/token.js
 const axios = require("axios");
+const cache = require("./cache");
 
-const TOKEN_LIST_URL = "https://tokens.jup.ag/tokens.json";
+const TOKENLIST_URL =
+  process.env.JUPITER_TOKENLIST_URL ||
+  "https://raw.githubusercontent.com/jup-ag/token-list/main/src/tokens/solana.tokenlist.json";
 
-// Cached token list
-let TOKEN_LIST = [];
+const CACHE_KEY = "tokenlist";
+const CACHE_TTL = 60 * 10; // 10 minutes
 
-/**
- * Load Jupiter token list once
- */
 async function loadTokenList() {
-  if (TOKEN_LIST.length > 0) return TOKEN_LIST;
+  const cached = cache.get(CACHE_KEY);
+  if (cached) return cached;
 
   try {
-    const res = await axios.get(TOKEN_LIST_URL, { timeout: 10000 });
-    TOKEN_LIST = res.data || [];
-    console.log(`Loaded ${TOKEN_LIST.length} tokens from Jupiter`);
+    const res = await axios.get(TOKENLIST_URL, { timeout: 8000 });
+    const json = res.data;
+    const list = Array.isArray(json.tokens) ? json.tokens : json;
+    cache.set(CACHE_KEY, list, CACHE_TTL);
+    return list;
   } catch (err) {
-    console.error("Token list load error:", err.message);
+    console.warn("Token list load error:", err.message || err);
+    cache.set(CACHE_KEY, [], 30);
+    return [];
   }
-
-  return TOKEN_LIST;
 }
 
-/**
- * Resolve user query → token metadata
- */
+function looksLikePubkey(s) {
+  if (!s || typeof s !== "string") return false;
+  return /^[1-9A-HJ-NP-Za-km-z]{32,60}$/.test(s);
+}
+
+function norm(s) {
+  return (s || "").toString().trim().toUpperCase();
+}
+
 async function resolve(query) {
-  const q = query.trim().toLowerCase();
+  if (!query) return null;
+  const q = query.toString().trim();
+  if (!q) return null;
+
+  if (norm(q) === "SOL" || norm(q) === "SOLANA") {
+    return {
+      address: "SOL",
+      symbol: "SOL",
+      name: "Solana",
+      decimals: 9,
+      extensions: { coingeckoId: "solana" },
+    };
+  }
+
+  if (looksLikePubkey(q)) {
+    return {
+      address: q,
+      symbol: null,
+      name: null,
+      decimals: null,
+      extensions: {},
+    };
+  }
+
   const list = await loadTokenList();
-  if (!list.length) return null;
+  if (!list || list.length === 0) return null;
 
-  // Direct mint/CA match
-  const mintMatch = list.find(t => t.address.toLowerCase() === q);
-  if (mintMatch) return mintMatch;
+  const nq = norm(q);
 
-  // Symbol match
-  const symbolMatch = list.find(t => t.symbol?.toLowerCase() === q);
-  if (symbolMatch) return symbolMatch;
+  const bySymbol = list.find((t) => norm(t.symbol) === nq);
+  if (bySymbol)
+    return {
+      address: bySymbol.address,
+      symbol: bySymbol.symbol,
+      name: bySymbol.name,
+      decimals: bySymbol.decimals,
+      extensions: bySymbol.extensions || {},
+    };
 
-  // Name match
-  const nameMatch = list.find(t => t.name?.toLowerCase() === q);
-  if (nameMatch) return nameMatch;
+  const byName = list.find((t) => norm(t.name) === nq);
+  if (byName)
+    return {
+      address: byName.address,
+      symbol: byName.symbol,
+      name: byName.name,
+      decimals: byName.decimals,
+      extensions: byName.extensions || {},
+    };
 
-  // Partial fallback
-  const partial = list.find(
-    t =>
-      t.symbol?.toLowerCase().includes(q) ||
-      t.name?.toLowerCase().includes(q)
+  const byNamePartial = list.find((t) =>
+    (t.name || "").toLowerCase().includes(q.toLowerCase())
   );
-  if (partial) return partial;
+  if (byNamePartial)
+    return {
+      address: byNamePartial.address,
+      symbol: byNamePartial.symbol,
+      name: byNamePartial.name,
+      decimals: byNamePartial.decimals,
+      extensions: byNamePartial.extensions || {},
+    };
 
   return null;
 }
 
-module.exports = { resolve };
+async function getByMint(mint) {
+  if (!mint) return null;
+  const list = await loadTokenList();
+  return list.find((t) => t.address === mint) || null;
+}
+
+module.exports = {
+  resolve,
+  getByMint,
+  loadTokenList,
+};
