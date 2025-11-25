@@ -1,50 +1,60 @@
+// services/token.js — resolve symbol/name/mint using Birdeye search (with SOL special-case)
 const axios = require("axios");
+const cache = require("./cache");
 
-const BASE_URL = process.env.BIRDEYE_BASE_URL || "https://public-api.birdeye.so";
+const BASE = process.env.BIRDEYE_BASE_URL || "https://public-api.birdeye.so";
 const API_KEY = process.env.BIRDEYE_API_KEY;
+const CACHE_KEY = "tokenlist_search_cache";
+const CACHE_TTL = 60 * 10;
 
-// Hardcode SOL (Birdeye uses wrapped SOL address)
-const SOL_MINT = "So11111111111111111111111111111111111111112";
+function looksLikePubkey(s) {
+  if (!s || typeof s !== "string") return false;
+  return /^[1-9A-HJ-NP-Za-km-z]{32,60}$/.test(s);
+}
 
 async function resolve(query) {
   if (!query) return null;
-  query = query.trim();
+  const q = query.trim();
+  const upper = q.toUpperCase();
 
-  // Direct mint address
-  if (query.length > 40) {
-    return { address: query, symbol: null, name: null };
+  if (upper === "SOL" || upper === "SOLANA") {
+    return { address: "So11111111111111111111111111111111111111112", symbol: "SOL", name: "Solana" };
   }
 
-  // SOL special case
-  if (query.toUpperCase() === "SOL") {
-    return { address: SOL_MINT, symbol: "SOL", name: "Solana" };
-  }
+  if (looksLikePubkey(q)) return { address: q, symbol: null, name: null };
 
-  // Search via Birdeye
+  // Cached search hits
+  const cacheKey = `search:${q.toLowerCase()}`;
+  const cached = cache.get(cacheKey);
+  if (cached) return cached;
+
   try {
-    const res = await axios.get(
-      `${BASE_URL}/search?keyword=${encodeURIComponent(query)}`,
-      {
-        headers: {
-          "X-API-KEY": API_KEY,
-          accept: "application/json",
-        },
-      }
-    );
-
-    const token = res.data.data?.tokens?.[0];
-    if (!token) return null;
-
-    return {
-      address: token.address,
-      symbol: token.symbol,
-      name: token.name,
-    };
-
+    const url = `${BASE}/search?keyword=${encodeURIComponent(q)}`;
+    const res = await axios.get(url, { headers: { "X-API-KEY": API_KEY, accept: "application/json" }, timeout: 8000 });
+    const token = res.data?.data?.tokens?.[0] || null;
+    if (!token) { cache.set(cacheKey, null, 30); return null; }
+    const out = { address: token.address, symbol: token.symbol, name: token.name, decimals: token.decimals, extensions: token.extensions || {} };
+    cache.set(cacheKey, out, CACHE_TTL);
+    return out;
   } catch (err) {
-    console.error("Token resolve error:", err.message);
+    console.warn("Token resolve error:", err.message);
+    cache.set(cacheKey, null, 30);
     return null;
   }
 }
 
-module.exports = { resolve };
+async function getByMint(mint) {
+  if (!mint) return null;
+  // try search by exact address
+  try {
+    const url = `${BASE}/defi/token_metadata?address=${encodeURIComponent(mint)}`;
+    const res = await axios.get(url, { headers: { "X-API-KEY": API_KEY, accept: "application/json" }, timeout: 8000 });
+    const t = res.data?.data || null;
+    if (!t) return null;
+    return { address: t.address, symbol: t.symbol, name: t.name, decimals: t.decimals, extensions: t.extensions || {} };
+  } catch (err) {
+    return null;
+  }
+}
+
+module.exports = { resolve, getByMint };
