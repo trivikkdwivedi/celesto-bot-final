@@ -1,4 +1,4 @@
-// services/cache.js
+// services/cache.js — tiny in-memory TTL cache
 const map = new Map();
 
 function set(key, value, ttlSeconds = 60) {
@@ -16,17 +16,7 @@ function get(key) {
   return entry.value;
 }
 
-function del(key) {
-  map.delete(key);
-}
+function del(key) { map.delete(key); }
+function clear() { map.clear(); }
 
-function clear() {
-  map.clear();
-}
-
-module.exports = {
-  get,
-  set,
-  del,
-  clear,
-};
+module.exports = { set, get, del, clear };
