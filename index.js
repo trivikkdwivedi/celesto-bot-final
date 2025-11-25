@@ -1,4 +1,4 @@
-// index.js
+// index.js — FINAL PRODUCTION VERSION
 require("dotenv").config();
 const { Telegraf } = require("telegraf");
 const express = require("express");
@@ -6,9 +6,12 @@ const express = require("express");
 // Services
 const dbService = require("./services/db");
 const walletService = require("./services/wallet");
+
+// Handlers
 const priceHandler = require("./handlers/price");
 const buyHandler = require("./handlers/buy");
 const sellHandler = require("./handlers/sell");
+const callbackHandler = require("./handlers/callbacks");
 
 // ENV
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -18,30 +21,20 @@ const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
 const SOLANA_RPC = process.env.SOLANA_RPC;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 
-if (!BOT_TOKEN) {
-  console.error("❌ Missing TELEGRAM_BOT_TOKEN");
-  process.exit(1);
-}
-
-if (!WEBHOOK_URL) {
-  console.error("❌ Missing WEBHOOK_URL (set to your Railway app URL)");
-  process.exit(1);
-}
+if (!BOT_TOKEN) throw new Error("❌ TELEGRAM_BOT_TOKEN missing");
+if (!WEBHOOK_URL) throw new Error("❌ WEBHOOK_URL missing");
 
 const bot = new Telegraf(BOT_TOKEN);
 
-/**
- * Initialize all services
- */
 async function startApp() {
   try {
-    // Initialize Supabase
+    // --- INIT SUPABASE ---
     await dbService.init({
       supabaseUrl: SUPABASE_URL,
       supabaseKey: SUPABASE_ANON_KEY,
     });
 
-    // Initialize wallet encryption + RPC
+    // --- INIT WALLET SERVICE ---
     await walletService.init({
       supabase: dbService.supabase,
       encryptionKey: ENCRYPTION_KEY,
@@ -51,37 +44,43 @@ async function startApp() {
     console.log("Supabase initialized");
     console.log("Services initialized");
 
-    /**
-     * BOT COMMANDS
-     */
+    // ========================
+    // BOT COMMANDS
+    // ========================
 
-    // /start
     bot.start(async (ctx) => {
-      const name = ctx.from?.first_name || ctx.from?.username || "User";
-      ctx.reply(`👋 Welcome ${name}!\n\nUse /help to see available commands.`);
+      const name = ctx.from?.first_name || "User";
+      ctx.reply(`👋 Welcome ${name}!\n\nUse /help to see all commands.`);
     });
 
-    // /help
     bot.command("help", (ctx) => {
       ctx.reply(
-        `📘 Commands:
+        `📘 *Available Commands*
 
-/createwallet — Create a secure encrypted wallet
-/mywallet — Show your wallet public key
-/balance — Show your SOL balance
-/price <token> — Get token price (symbol, name or mint)
-*/buy* and */sell* — swap tokens (experimental)
+/createwallet — Create encrypted wallet  
+/mywallet — View your wallet address  
+/balance — Check SOL balance  
+/price <symbol/name/CA> — Price with buttons  
+/buy — Buy tokens (simple flow)  
+/sell — Sell tokens (simple flow)
+
+Buttons available inside */price*:
+🔁 Refresh  
+🛒 Buy  
+📤 Sell  
+📈 Chart  
+
 `,
         { parse_mode: "Markdown" }
       );
     });
 
-    // /createwallet
+    // --- WALLET COMMANDS ---
     bot.command("createwallet", async (ctx) => {
       try {
-        const telegramId = String(ctx.from.id);
+        const tgId = String(ctx.from.id);
+        const existing = await walletService.getWallet(tgId);
 
-        const existing = await walletService.getWallet(telegramId);
         if (existing) {
           return ctx.reply(
             `⚠️ You already have a wallet:\n\`${existing.publicKey}\``,
@@ -89,87 +88,66 @@ async function startApp() {
           );
         }
 
-        const created = await walletService.createWallet({
-          ownerId: telegramId,
-        });
-
+        const w = await walletService.createWallet({ ownerId: tgId });
         ctx.reply(
-          `✅ Wallet created!\n\nPublic key:\n\`${created.publicKey}\``,
+          `✅ Wallet created!\n\n🔑 Public key:\n\`${w.publicKey}\``,
           { parse_mode: "Markdown" }
         );
-      } catch (err) {
-        console.error("createwallet error:", err);
+      } catch (e) {
+        console.error("createwallet error:", e);
         ctx.reply("❌ Failed to create wallet.");
       }
     });
 
-    // /mywallet
     bot.command("mywallet", async (ctx) => {
       try {
-        const wallet = await walletService.getWallet(String(ctx.from.id));
-        if (!wallet) {
-          return ctx.reply("❌ No wallet found. Use /createwallet");
-        }
-
-        ctx.reply(`🔑 Your wallet address:\n\`${wallet.publicKey}\``, {
+        const w = await walletService.getWallet(String(ctx.from.id));
+        if (!w) return ctx.reply("❌ No wallet found. Use /createwallet");
+        ctx.reply(`🔑 Your wallet:\n\`${w.publicKey}\``, {
           parse_mode: "Markdown",
         });
-      } catch (err) {
-        console.error("mywallet error:", err);
+      } catch (e) {
+        console.error("mywallet error:", e);
         ctx.reply("❌ Failed to fetch wallet.");
       }
     });
 
-    // /balance
     bot.command("balance", async (ctx) => {
       try {
-        const wallet = await walletService.getWallet(String(ctx.from.id));
-        if (!wallet) {
-          return ctx.reply("❌ No wallet found. Use /createwallet");
-        }
-
-        const sol = await walletService.getSolBalance(wallet.publicKey);
-
+        const w = await walletService.getWallet(String(ctx.from.id));
+        if (!w) return ctx.reply("❌ No wallet found. Use /createwallet");
+        const sol = await walletService.getSolBalance(w.publicKey);
         ctx.reply(
-          `💰 SOL Balance for:\n\`${wallet.publicKey}\`\n\n**${sol.toFixed(
-            6
-          )} SOL**`,
+          `💰 Balance:\n\`${w.publicKey}\`\n\n*${sol.toFixed(6)} SOL*`,
           { parse_mode: "Markdown" }
         );
-      } catch (err) {
-        console.error("balance error:", err);
-        ctx.reply("❌ Failed to fetch SOL balance.");
+      } catch (e) {
+        console.error("balance error:", e);
+        ctx.reply("❌ Failed to fetch balance.");
       }
     });
 
-    // /price
-    bot.command("price", async (ctx) => {
-      return priceHandler(ctx);
-    });
+    // --- PRICE + BUTTONS ---
+    bot.command("price", priceHandler);
 
-    // /buy
-    bot.command("buy", async (ctx) => {
-      return buyHandler(ctx);
-    });
+    // --- buy/sell stubs ---
+    bot.command("buy", buyHandler);
+    bot.command("sell", sellHandler);
 
-    // /sell
-    bot.command("sell", async (ctx) => {
-      return sellHandler(ctx);
-    });
+    // --- BUTTON CALLBACK HANDLER ---
+    bot.on("callback_query", callbackHandler);
 
-    /**
-     * WEBHOOK MODE (Railway compatible)
-     */
+    // ========================
+    // WEBHOOK MODE (RAILWAY)
+    // ========================
     const app = express();
     app.use(express.json());
 
-    // Set webhook on Telegram (register)
     await bot.telegram.setWebhook(`${WEBHOOK_URL}/bot`);
 
-    // Telegram will send updates here
     app.post("/bot", (req, res) => {
       bot.handleUpdate(req.body).catch((e) => {
-        console.error("handleUpdate error:", e);
+        console.error("callback error:", e);
       });
       res.sendStatus(200);
     });
