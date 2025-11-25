@@ -1,4 +1,4 @@
-// services/db.js — Supabase helper layer for storing encrypted wallets
+// services/db.js
 const { createClient } = require("@supabase/supabase-js");
 
 let supabase = null;
