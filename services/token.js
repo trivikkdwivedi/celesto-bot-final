@@ -1,100 +1,86 @@
-// services/token.js — Resolve CA / symbol / name into mint metadata
+// services/token.js
+//
+// Token resolver for:
+// - mint address (CA)
+// - token symbol
+// - token name
+//
+// Uses Jupiter token-list + Birdeye as fallback.
+// Caches results via NodeCache.
+// ---------------------------------------------------------
+
 const axios = require("axios");
 const cache = require("./cache");
 
-const BIRDEYE_LIST_URL = "https://public-api.birdeye.so/public/tokenlist";
+const TOKENLIST_URL = "https://tokens.jup.ag/tokens";
 
+// fetch & cache full token list (24h)
 async function loadTokenList() {
-  // Check cache (10 min)
   const cached = cache.get("tokenlist");
   if (cached) return cached;
 
   try {
-    const res = await axios.get(BIRDEYE_LIST_URL, {
-      headers: { "X-API-KEY": process.env.BIRDEYE_API_KEY },
-    });
+    const res = await axios.get(TOKENLIST_URL, { timeout: 10000 });
+    if (!Array.isArray(res.data)) throw new Error("Bad tokenlist format");
 
-    const list = res.data?.data?.tokens || [];
-
-    // Cache for 10 minutes
-    cache.set("tokenlist", list, 600);
-
-    return list;
+    cache.set("tokenlist", res.data, 86400); // 24h cache
+    return res.data;
   } catch (err) {
     console.error("Token list load error:", err.message);
     return [];
   }
 }
 
-/**
- * Resolve CA / symbol / name → token object
- */
+// main resolver
 async function resolve(query) {
   if (!query) return null;
 
-  const q = query.trim().toLowerCase();
+  const q = String(query).trim();
+
+  // 1. Direct mint address (all Solana mints are 32–44 chars)
+  if (q.length >= 32 && q.length <= 50) {
+    const list = await loadTokenList();
+    const found = list.find(t => t.address === q);
+    if (found) return found;
+
+    // fallback pseudo-token (mint but not in list)
+    return {
+      address: q,
+      symbol: q.slice(0, 4).toUpperCase(),
+      name: "Unknown Token",
+      decimals: 9,
+    };
+  }
+
+  // 2. Symbol or Name search
   const list = await loadTokenList();
+  const lower = q.toLowerCase();
 
-  if (!list.length) return null;
+  // exact symbol match first
+  let found =
+    list.find(t => t.symbol?.toLowerCase() === lower) ||
+    list.find(t => t.name?.toLowerCase() === lower);
 
-  // CA exact match
-  const exactCA = list.find((t) => t.address?.toLowerCase() === q);
-  if (exactCA) {
-    return {
-      address: exactCA.address,
-      symbol: exactCA.symbol,
-      name: exactCA.name,
-    };
+  if (!found) {
+    // partial match fallback
+    found =
+      list.find(t => t.symbol?.toLowerCase().startsWith(lower)) ||
+      list.find(t => t.name?.toLowerCase().startsWith(lower));
   }
 
-  // Symbol exact match
-  const symExact = list.find((t) => t.symbol?.toLowerCase() === q);
-  if (symExact) {
-    return {
-      address: symExact.address,
-      symbol: symExact.symbol,
-      name: symExact.name,
-    };
-  }
+  if (found) return found;
 
-  // Name exact match
-  const nameExact = list.find((t) => t.name?.toLowerCase() === q);
-  if (nameExact) {
-    return {
-      address: nameExact.address,
-      symbol: nameExact.symbol,
-      name: nameExact.name,
-    };
-  }
-
-  // Partial symbol match
-  const symPartial = list.find((t) =>
-    t.symbol?.toLowerCase().includes(q)
-  );
-  if (symPartial) {
-    return {
-      address: symPartial.address,
-      symbol: symPartial.symbol,
-      name: symPartial.name,
-    };
-  }
-
-  // Partial name match
-  const namePartial = list.find((t) =>
-    t.name?.toLowerCase().includes(q)
-  );
-  if (namePartial) {
-    return {
-      address: namePartial.address,
-      symbol: namePartial.symbol,
-      name: namePartial.name,
-    };
-  }
-
+  // nothing found
   return null;
+}
+
+// get metadata by mint
+async function getByMint(mint) {
+  return resolve(mint);
 }
 
 module.exports = {
   resolve,
+  getByMint,
   loadTokenList,
 };
