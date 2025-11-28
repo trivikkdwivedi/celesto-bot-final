@@ -1,72 +1,61 @@
 const tokenService = require("../services/token");
 const swapService = require("../services/swap");
+const walletService = require("../services/wallet");
 const portfolioService = require("../services/portfolio");
 
 module.exports = async function sellHandler(ctx) {
   try {
-    const parts = ctx.message.text.split(" ").slice(1);
-
-    if (parts.length < 3) {
-      return ctx.reply("⚠️ Usage:\n/sell <inputToken> <outputToken> <amount>");
+    const args = ctx.message.text.split(" ").slice(1);
+    if (args.length < 3) {
+      return ctx.reply("⚠️ Usage: /sell <input> <output> <amount>");
     }
 
-    const [inputQuery, outputQuery, amountStr] = parts;
-
+    const [inputQ, outputQ, amountStr] = args;
     const amount = parseFloat(amountStr);
+
     if (isNaN(amount) || amount <= 0) {
       return ctx.reply("❌ Invalid amount.");
     }
 
     const telegramId = String(ctx.from.id);
-    const wallet = await ctx.wallet?.getWallet(telegramId) || null;
+    const wallet = await walletService.getWallet(telegramId);
 
-    if (!wallet) {
-      return ctx.reply("❌ No wallet found. Use /createwallet");
+    if (!wallet) return ctx.reply("❌ No wallet found. Use /createwallet");
+
+    const inputTok = await tokenService.resolve(inputQ);
+    const outputTok = await tokenService.resolve(outputQ);
+
+    if (!inputTok || !outputTok) {
+      return ctx.reply("❌ Token not found.");
     }
 
-    // Token resolution
-    const inputToken = await tokenService.resolve(inputQuery);
-    const outputToken = await tokenService.resolve(outputQuery);
-
-    if (!inputToken || !outputToken) {
-      return ctx.reply("❌ Could not resolve one of the tokens.");
-    }
-
-    const inputMint = inputToken.address;
-    const outputMint = outputToken.address;
-
-    // Jupiter swap execution
     const result = await swapService.executeSwap({
       wallet,
-      inputMint,
-      outputMint,
+      inputMint: inputTok.address,
+      outputMint: outputTok.address,
       amountIn: amount,
     });
 
-    if (!result || !result.signature) {
-      return ctx.reply("❌ Sell failed. Try again.");
-    }
+    if (!result) return ctx.reply("❌ Sell failed.");
 
-    // Update portfolio tracker
-    await portfolioService.addTransaction({
+    // Update portfolio (decrease input token)
+    await portfolioService.updateToken(
       telegramId,
-      tokenMint: inputMint,
-      tokenSymbol: inputToken.symbol,
-      amount,
-      direction: "SELL",
-    });
+      inputTok.address,
+      Math.max(0, amount * -1)
+    );
 
     return ctx.reply(
-      `✅ *SELL Successful!*\n\n` +
-      `• Sold: *${inputToken.symbol}*\n` +
-      `• Received: *${outputToken.symbol}*\n` +
-      `• Amount: *${amount}*\n\n` +
-      `🔗 Explorer:\nhttps://solscan.io/tx/${result.signature}`,
+      `✅ *SELL Successful*\n\n` +
+      `• Sold: ${inputTok.symbol}\n` +
+      `• Received: ${outputTok.symbol}\n` +
+      `• Amount: ${amount}\n\n` +
+      `🔗 https://solscan.io/tx/${result.signature}`,
       { parse_mode: "Markdown" }
     );
 
   } catch (err) {
-    console.error("Sell command error:", err);
+    console.error("SELL ERROR:", err);
     return ctx.reply("❌ Sell failed.");
   }
 };
