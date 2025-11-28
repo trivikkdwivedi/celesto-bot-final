@@ -1,36 +1,60 @@
-// handlers/price.js — /price with buttons
 const tokenService = require("../services/token");
 const priceService = require("../services/price");
 const { Markup } = require("telegraf");
 
-function buildKeyboard(mint) {
-  const chartUrl = mint && mint !== "SOL" ? `https://solscan.io/token/${mint}` : `https://solscan.io/`;
-  return Markup.inlineKeyboard([
-    [ Markup.button.callback("🔁 Refresh", `refresh|${mint}`), Markup.button.callback("🛒 Buy", `buy|${mint}`), Markup.button.callback("📤 Sell", `sell|${mint}`) ],
-    [ Markup.button.url("📈 Chart", chartUrl) ]
-  ]);
-}
-
 module.exports = async function priceCommand(ctx) {
   try {
-    const parts = ctx.message?.text?.split(/\s+/).slice(1) || [];
-    const rawQuery = parts.join(" ") || "SOL";
+    const parts = ctx.message?.text?.split(/\s+/).slice(1);
+    if (!parts || parts.length === 0) {
+      return ctx.reply("💲 Usage: /price <token>");
+    }
 
-    const token = await tokenService.resolve(rawQuery);
-    let mint, symbol;
-    if (!token) { mint = rawQuery.trim(); symbol = rawQuery.toUpperCase(); } else { mint = token.address; symbol = token.symbol || token.name || rawQuery.toUpperCase(); }
+    const query = parts.join(" ").trim();
 
-    if (!mint) return ctx.reply(`❌ Could not resolve token: "${rawQuery}"`);
+    // Resolve symbol / name / CA → mint
+    const token = await tokenService.resolve(query);
+    if (!token || !token.address) {
+      return ctx.reply(`❌ Unknown token: "${query}"`);
+    }
 
+    const mint = token.address;
+    const symbol = token.symbol || query.toUpperCase();
+
+    // Fetch price
     const price = await priceService.getPrice(mint);
-    if (price === null) return ctx.reply(`⚠️ No reliable market price for:\n• **${symbol}**\n• Mint: \`${mint}\``, { parse_mode: "Markdown" });
+    if (!price) {
+      return ctx.reply(`⚠️ No price available for *${symbol}*`, {
+        parse_mode: "Markdown",
+      });
+    }
 
-    const priceStr = `$${Number(price).toFixed(6)}`;
-    const text = `💰 *${symbol.toUpperCase()}*\n\n• *Mint:* \`${mint}\`\n• *Price:* **${priceStr}**`;
+    // UI
+    const text = `
+💰 *${symbol} Price*
 
-    return ctx.reply(text, { parse_mode: "Markdown", ...buildKeyboard(mint) });
+🪪 Mint:
+\`${mint}\`
+
+💵 Price: *$${Number(price).toFixed(6)}*
+`;
+
+    const buttons = Markup.inlineKeyboard([
+      [
+        Markup.button.callback("📊 Chart", `chart|${mint}|1H`),
+        Markup.button.callback("ℹ️ Info", `info_refresh|${mint}`)
+      ],
+      [
+        Markup.button.callback("🔁 Refresh", `price_refresh|${mint}`)
+      ]
+    ]);
+
+    return ctx.reply(text.trim(), {
+      parse_mode: "Markdown",
+      ...buttons,
+    });
+
   } catch (err) {
-    console.error("priceCommand error:", err);
+    console.error("/price error:", err);
     return ctx.reply("⚠️ Failed to fetch price. Try again later.");
   }
 };
