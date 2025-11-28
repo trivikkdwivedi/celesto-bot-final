@@ -1,40 +1,37 @@
 const portfolioService = require("../services/portfolio");
-const priceService = require("../services/price");
 const tokenService = require("../services/token");
+const priceService = require("../services/price");
 
-async function portfolioCommand(ctx) {
+module.exports = async function portfolioHandler(ctx) {
   try {
     const telegramId = String(ctx.from.id);
 
-    const items = await portfolioService.getPortfolio(telegramId);
-
-    if (!items.length) {
-      return ctx.reply("📭 Your portfolio is empty.\nBuy tokens to get started!");
+    const holdings = await portfolioService.getPortfolio(telegramId);
+    if (!holdings.length) {
+      return ctx.reply("📭 Your portfolio is empty.");
     }
 
-    let totalUsd = 0;
-    let text = `📊 *Your Portfolio*\n\n`;
+    const valued = await portfolioService.valuatePortfolio(holdings);
 
-    for (const row of items) {
-      const token = await tokenService.getByMint(row.mint);
-      const price = await priceService.getPrice(row.mint);
+    let total = 0;
+    let out = `📊 *Your Portfolio*\n\n`;
 
-      const value = (row.amount * (price || 0));
-      totalUsd += value;
+    for (const item of valued) {
+      const tok = await tokenService.getByMint(item.mint);
+      total += item.value;
 
-      text += `• *${token?.symbol || "TOKEN"}*\n`;
-      text += `  Amount: *${row.amount}*\n`;
-      text += `  Value: *$${value.toFixed(2)}*\n\n`;
+      out += `• *${tok?.symbol || "TOKEN"}*\n`;
+      out += `  Amount: ${item.amount}\n`;
+      out += `  Price: $${item.price?.toFixed(4) || "N/A"}\n`;
+      out += `  Value: $${item.value.toFixed(2)}\n\n`;
     }
 
-    text += `💰 *Total Value:* $${totalUsd.toFixed(2)}`;
+    out += `💰 *Total Value:* $${total.toFixed(2)}`;
 
-    return ctx.reply(text, { parse_mode: "Markdown" });
+    return ctx.reply(out, { parse_mode: "Markdown" });
 
   } catch (err) {
-    console.error("portfolioCommand error:", err);
-    return ctx.reply("❌ Failed to load portfolio.");
+    console.error("portfolio error:", err);
+    return ctx.reply("❌ Could not load portfolio.");
   }
-}
-
-module.exports = portfolioCommand;
+};
