@@ -124,4 +124,4 @@ async function infoCommand(ctx) {
   }
 }
 
-module.exports = infoCommand;
+module.exports = infoCommand; 
