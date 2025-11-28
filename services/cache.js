@@ -1,22 +1,6 @@
-// services/cache.js — tiny in-memory TTL cache
-const map = new Map();
+const NodeCache = require("node-cache");
 
-function set(key, value, ttlSeconds = 60) {
-  const expiresAt = Date.now() + ttlSeconds * 1000;
-  map.set(key, { value, expiresAt });
-}
+// 60s default TTL
+const cache = new NodeCache({ stdTTL: 60, checkperiod: 120 });
 
-function get(key) {
-  const entry = map.get(key);
-  if (!entry) return undefined;
-  if (Date.now() > entry.expiresAt) {
-    map.delete(key);
-    return undefined;
-  }
-  return entry.value;
-}
-
-function del(key) { map.delete(key); }
-function clear() { map.clear(); }
-
-module.exports = { set, get, del, clear };
+module.exports = cache;
