@@ -1,14 +1,12 @@
 const axios = require("axios");
 const tokenService = require("../services/token");
 const priceService = require("../services/price");
+const { Markup } = require("telegraf");
 
-const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY;
-
-// Birdeye endpoint
-const BIRDEYE_INFO_API =
+const BIRDEYE_INFO_URL =
   "https://public-api.birdeye.so/defi/metadata?address=";
 
-async function infoCommand(ctx) {
+module.exports = async function infoCommand(ctx) {
   try {
     const parts = ctx.message?.text?.split(/\s+/).slice(1);
     if (!parts || parts.length === 0) {
@@ -17,71 +15,68 @@ async function infoCommand(ctx) {
 
     const query = parts.join(" ").trim();
 
-    // Resolve: CA / symbol / name ➝ mint address
+    // Resolve input → token metadata
     const token = await tokenService.resolve(query);
     if (!token || !token.address) {
-      return ctx.reply(`❌ Could not resolve token: "${query}"`);
+      return ctx.reply(`❌ Unknown token: "${query}"`);
     }
 
     const mint = token.address;
+    const symbol = token.symbol || query.toUpperCase();
 
-    // Get price from your price service (Birdeye-powered)
-    const price = await priceService.getPrice(mint);
-
-    // Fetch token metadata from Birdeye
-    const res = await axios.get(`${BIRDEYE_INFO_API}${mint}`, {
-      headers: { "X-API-KEY": BIRDEYE_API_KEY },
-      timeout: 7000,
-    });
-
-    const info = res.data?.data;
-    if (!info) {
-      return ctx.reply("⚠️ Failed to fetch token info.");
+    // Fetch Birdeye metadata
+    let info;
+    try {
+      const res = await axios.get(BIRDEYE_INFO_URL + mint, {
+        headers: { "X-API-KEY": process.env.BIRDEYE_API_KEY },
+      });
+      info = res.data?.data;
+    } catch (err) {
+      console.error("Birdeye info error:", err.message);
+      return ctx.reply("⚠️ Failed to load token info.");
     }
 
-    // Safely extract values
-    const symbol = info.symbol || token.symbol || "N/A";
-    const name = info.name || "N/A";
-    const fdv = info.fdv ? `$${Number(info.fdv).toLocaleString()}` : "N/A";
-    const liquidity = info.liquidity
-      ? `$${Number(info.liquidity).toLocaleString()}`
-      : "N/A";
+    if (!info) {
+      return ctx.reply("⚠️ No info available for this token.");
+    }
 
-    const mc = info.mc ? `$${Number(info.mc).toLocaleString()}` : "N/A";
-    const vol24h = info.v24h
-      ? `$${Number(info.v24h).toLocaleString()}`
-      : "N/A";
+    const price = await priceService.getPrice(mint);
 
-    const change24h =
-      info.change24h !== undefined
-        ? `${Number(info.change24h).toFixed(2)}%`
-        : "N/A";
+    const text = `
+ℹ️ *${info.name || symbol} Token Info*
 
-    const priceTxt = price
-      ? `$${Number(price).toFixed(6)}`
-      : "N/A";
+🪪 Mint:
+\`${mint}\`
 
-    const message = `
-📊 *${name}*  (${symbol})
-────────────────────
-🪙 *Mint:* \`${mint}\`
+💵 *Price:*      $${price ? price.toFixed(6) : "N/A"}
+📈 *24h Change:* ${info.change24h ? info.change24h.toFixed(2) + "%" : "N/A"}
+📊 *Market Cap:* ${info.mc ? "$" + info.mc.toLocaleString() : "N/A"}
+💧 *Liquidity:*  ${info.liquidity ? "$" + info.liquidity.toLocaleString() : "N/A"}
+📦 *Volume 24h:* ${info.v24h ? "$" + info.v24h.toLocaleString() : "N/A"}
 
-💰 *Price:* ${priceTxt}
-📈 *24h Change:* ${change24h}
-📊 *Market Cap:* ${mc}
-🏦 *FDV:* ${fdv}
-💧 *Liquidity:* ${liquidity}
-📊 *Volume 24h:* ${vol24h}
+🧩 *Symbol:* ${symbol}
+🔤 *Name:*   ${info.name || "N/A"}
+
+🌍 *Website:* ${info.website || "N/A"}
+🐦 *Twitter:* ${info.twitter || "N/A"}
+📄 *Description:*
+${info.description?.slice(0, 200) || "No description available."}
 `;
 
-    return ctx.reply(message.trim(), {
-      parse_mode: "Markdown",
-    });
+    const keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.callback("💲 Price", `price_refresh|${mint}`),
+        Markup.button.callback("📊 Chart", `chart_refresh|${mint}`),
+      ],
+      [Markup.button.callback("🔁 Refresh Info", `info_refresh|${mint}`)],
+    ]);
 
+    return ctx.reply(text.trim(), {
+      parse_mode: "Markdown",
+      ...keyboard,
+    });
   } catch (err) {
     console.error("/info error:", err);
-    return ctx.reply("⚠️ Failed to fetch token info.");
+    return ctx.reply("⚠️ Failed to load token info.");
   }
-}
-
-module.exports = infoCommand;
+};
