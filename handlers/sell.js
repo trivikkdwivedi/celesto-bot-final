@@ -1,61 +1,55 @@
+// handlers/sell.js
 const tokenService = require("../services/token");
-const swapService = require("../services/swap");
+const swap = require("../services/swap");
 const walletService = require("../services/wallet");
-const portfolioService = require("../services/portfolio");
+const portfolio = require("../services/portfolio");
 
 module.exports = async function sellHandler(ctx) {
   try {
-    const args = ctx.message.text.split(" ").slice(1);
-    if (args.length < 3) {
-      return ctx.reply("⚠️ Usage: /sell <input> <output> <amount>");
+    const parts = ctx.message?.text?.split(/\s+/).slice(1);
+    if (!parts || parts.length < 3) {
+      return ctx.reply("Usage: /sell <input> <output> <amount>");
     }
 
-    const [inputQ, outputQ, amountStr] = args;
-    const amount = parseFloat(amountStr);
+    const [inputQ, outputQ, amountStr] = parts;
+    const amount = Number(amountStr);
+    if (isNaN(amount) || amount <= 0) return ctx.reply("Invalid amount.");
 
-    if (isNaN(amount) || amount <= 0) {
-      return ctx.reply("❌ Invalid amount.");
-    }
-
-    const telegramId = String(ctx.from.id);
-    const wallet = await walletService.getWallet(telegramId);
-
-    if (!wallet) return ctx.reply("❌ No wallet found. Use /createwallet");
+    const tg = String(ctx.from.id);
+    const userWallet = await walletService.getWallet(tg);
+    if (!userWallet) return ctx.reply("No wallet found. Use /createwallet");
 
     const inputTok = await tokenService.resolve(inputQ);
     const outputTok = await tokenService.resolve(outputQ);
 
-    if (!inputTok || !outputTok) {
-      return ctx.reply("❌ Token not found.");
-    }
+    if (!inputTok || !outputTok) return ctx.reply("Could not resolve tokens.");
 
-    const result = await swapService.executeSwap({
-      wallet,
+    // execute swap
+    const res = await swap.executeSwap({
+      wallet: userWallet,
       inputMint: inputTok.address,
       outputMint: outputTok.address,
-      amountIn: amount,
+      amountInFloat: amount,
     });
 
-    if (!result) return ctx.reply("❌ Sell failed.");
+    if (!res || !res.signature) {
+      return ctx.reply("Swap failed.");
+    }
 
-    // Update portfolio (decrease input token)
-    await portfolioService.updateToken(
-      telegramId,
-      inputTok.address,
-      Math.max(0, amount * -1)
-    );
+    // Decrease portfolio by inAmount
+    if (res.inAmount !== null && res.inAmount !== undefined) {
+      await portfolio.adjustToken(tg, inputTok.address, -Number(res.inAmount));
+    } else {
+      console.warn("Sell: inAmount unknown, portfolio not updated automatically.");
+    }
 
     return ctx.reply(
-      `✅ *SELL Successful*\n\n` +
-      `• Sold: ${inputTok.symbol}\n` +
-      `• Received: ${outputTok.symbol}\n` +
-      `• Amount: ${amount}\n\n` +
-      `🔗 https://solscan.io/tx/${result.signature}`,
+      `✅ Sell executed.\nTx: \`${res.signature}\`\nSold: ${res.inAmount ?? "N/A"} ${inputTok.symbol || ""}`,
       { parse_mode: "Markdown" }
     );
 
   } catch (err) {
-    console.error("SELL ERROR:", err);
-    return ctx.reply("❌ Sell failed.");
+    console.error("/sell error:", err);
+    return ctx.reply("Sell failed: " + (err.message || ""));
   }
 };
