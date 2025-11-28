@@ -1,86 +1,45 @@
-// services/token.js
-//
-// Token resolver for:
-// - mint address (CA)
-// - token symbol
-// - token name
-//
-// Uses Jupiter token-list + Birdeye as fallback.
-// Caches results via NodeCache.
-// ---------------------------------------------------------
-
+// services/token.js — Birdeye-powered token resolver
 const axios = require("axios");
-const cache = require("./cache");
 
-const TOKENLIST_URL = "https://tokens.jup.ag/tokens";
+const BIRDEYE_TOKEN_LIST =
+  "https://public-api.birdeye.so/public/tokenlist?chain=solana";
 
-// fetch & cache full token list (24h)
-async function loadTokenList() {
-  const cached = cache.get("tokenlist");
-  if (cached) return cached;
+let TOKEN_MAP = null;
 
+// Load token list once
+async function load() {
   try {
-    const res = await axios.get(TOKENLIST_URL, { timeout: 10000 });
-    if (!Array.isArray(res.data)) throw new Error("Bad tokenlist format");
+    const res = await axios.get(BIRDEYE_TOKEN_LIST, {
+      headers: { "x-api-key": process.env.BIRDEYE_API_KEY }
+    });
 
-    cache.set("tokenlist", res.data, 86400); // 24h cache
-    return res.data;
+    if (res.data && res.data.data && res.data.data.tokens) {
+      TOKEN_MAP = res.data.data.tokens;
+      console.log(`Loaded ${TOKEN_MAP.length} tokens`);
+    }
   } catch (err) {
     console.error("Token list load error:", err.message);
-    return [];
   }
 }
 
-// main resolver
+// Ensure loaded before usage
+async function ensureLoaded() {
+  if (!TOKEN_MAP) await load();
+}
+
+// Resolve a token by symbol, name, or mint
 async function resolve(query) {
-  if (!query) return null;
+  await ensureLoaded();
+  if (!TOKEN_MAP) return null;
 
-  const q = String(query).trim();
+  const q = query.trim().toLowerCase();
 
-  // 1. Direct mint address (all Solana mints are 32–44 chars)
-  if (q.length >= 32 && q.length <= 50) {
-    const list = await loadTokenList();
-    const found = list.find(t => t.address === q);
-    if (found) return found;
-
-    // fallback pseudo-token (mint but not in list)
-    return {
-      address: q,
-      symbol: q.slice(0, 4).toUpperCase(),
-      name: "Unknown Token",
-      decimals: 9,
-    };
-  }
-
-  // 2. Symbol or Name search
-  const list = await loadTokenList();
-  const lower = q.toLowerCase();
-
-  // exact symbol match first
-  let found =
-    list.find(t => t.symbol?.toLowerCase() === lower) ||
-    list.find(t => t.name?.toLowerCase() === lower);
-
-  if (!found) {
-    // partial match fallback
-    found =
-      list.find(t => t.symbol?.toLowerCase().startsWith(lower)) ||
-      list.find(t => t.name?.toLowerCase().startsWith(lower));
-  }
-
-  if (found) return found;
-
-  // nothing found
-  return null;
+  return (
+    TOKEN_MAP.find(t => t.address.toLowerCase() === q) || // CA
+    TOKEN_MAP.find(t => t.symbol?.toLowerCase() === q) || // symbol
+    TOKEN_MAP.find(t => t.name?.toLowerCase() === q) ||   // name
+    null
+  );
 }
 
-// get metadata by mint
-async function getByMint(mint) {
-  return resolve(mint);
-}
-
-module.exports = {
-  resolve,
-  getByMint,
-  loadTokenList,
-};
+module.exports = { resolve, load };
