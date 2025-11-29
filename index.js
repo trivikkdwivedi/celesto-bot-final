@@ -14,7 +14,9 @@ const sellHandler = require("./handlers/sell");
 const menuHandler = require("./handlers/menu");
 const search = require("./handlers/search");
 
-// ENV
+// Track states
+const waitingFor = {}; // { userId: 'price' | 'info' }
+
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -22,20 +24,19 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
 const SOLANA_RPC = process.env.SOLANA_RPC;
 
-// Validation
-if (!BOT_TOKEN) throw new Error("❌ Missing TELEGRAM_BOT_TOKEN");
-if (!WEBHOOK_URL) throw new Error("❌ Missing WEBHOOK_URL");
+if (!BOT_TOKEN) throw new Error("Missing TELEGRAM_BOT_TOKEN");
+if (!WEBHOOK_URL) throw new Error("Missing WEBHOOK_URL");
 
 const bot = new Telegraf(BOT_TOKEN);
 
 async function startApp() {
-  // Initialize DB
+  // Init DB
   await dbService.init({
     supabaseUrl: SUPABASE_URL,
     supabaseKey: SUPABASE_ANON_KEY,
   });
 
-  // Init wallet service
+  // Init wallet
   await walletService.init({
     supabase: dbService.supabase,
     encryptionKey: ENCRYPTION_KEY,
@@ -47,48 +48,63 @@ async function startApp() {
 
   // COMMANDS
   bot.start((ctx) =>
-    ctx.reply("👋 Welcome to Celesto Bot! Use /menu to get started.")
+    ctx.reply("👋 Welcome to Celesto Bot! Use /menu to begin.")
   );
 
   bot.command("menu", menuHandler);
 
-  // NEW: /price prompts for token name
-  bot.command("price", price.askPrice);
+  bot.command("price", async (ctx) => {
+    waitingFor[ctx.from.id] = "price";
+    return price.askPrice(ctx);
+  });
 
-  // /info command
-  bot.command("info", infoHandler);
+  bot.command("info", async (ctx) => {
+    waitingFor[ctx.from.id] = "info";
+    return ctx.reply("ℹ️ Send the token you want info for:");
+  });
 
-  // Buy & Sell
   bot.command("buy", buyHandler);
   bot.command("sell", sellHandler);
 
   /**
-   * 🔍 INLINE TOKEN SEARCH (Birdeye)
-   * When user types ANYTHING:
-   *  1. Search Birdeye
-   *  2. If user is in /price mode → handle price input
+   * 🔍 FAST & OPTIMIZED INPUT HANDLER
    */
-  bot.on("text", async (ctx, next) => {
-    // 1) Birdeye search suggestions
-    await search.searchHandler(ctx);
+  bot.on("text", async (ctx) => {
+    const userId = ctx.from.id;
+    const mode = waitingFor[userId];
 
-    // 2) /price user response
-    await price.handlePriceResponse(ctx);
+    if (!mode) return; // ignore normal chat
 
-    return next();
+    const msg = ctx.message.text.trim();
+
+    // If user is searching token for PRICE
+    if (mode === "price") {
+      // Search Birdeye token (light)
+      await search.searchHandler(ctx);
+
+      // If user sends full token text
+      return price.handlePriceResponse(ctx);
+    }
+
+    // If user is searching token for INFO
+    if (mode === "info") {
+      const token = msg;
+      waitingFor[userId] = null;
+      return infoHandler(ctx);
+    }
   });
 
   // User taps a search result button
   bot.action(/select_(.+)/, search.selectedToken);
 
-  // Inline action for price refresh / buy / sell / chart
+  // Refresh / Buy / Sell buttons
   bot.action(/refresh_(.+)/, price.handlePriceResponse);
   bot.action(/buy_(.+)/, buyHandler);
   bot.action(/sell_(.+)/, sellHandler);
-  bot.action(/chart_(.+)/, (ctx) => ctx.reply("📈 Chart feature coming soon"));
+  bot.action(/chart_(.+)/, (ctx) => ctx.reply("📈 Chart coming soon"));
 
   /**
-   * WEBHOOK MODE FOR RAILWAY
+   * WEBHOOK (Railway)
    */
   const app = express();
   app.use(express.json());
@@ -101,10 +117,9 @@ async function startApp() {
   });
 
   const PORT = process.env.PORT || 8080;
-  app.listen(PORT, () => {
-    console.log(`🚀 Webhook server running on port ${PORT}`);
-    console.log(`Webhook URL: ${WEBHOOK_URL}/bot`);
-  });
+  app.listen(PORT, () =>
+    console.log(`🚀 Webhook running on port ${PORT}`)
+  );
 }
 
 startApp();
