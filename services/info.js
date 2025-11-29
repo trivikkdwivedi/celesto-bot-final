@@ -6,9 +6,9 @@ async function getTokenOverview(mint) {
     const res = await axios.get(url, {
       headers: {
         "X-API-KEY": process.env.BIRDEYE_API_KEY,
-        Accept: "application/json",
+        Accept: "application/json"
       },
-      timeout: 8000,
+      timeout: 8000
     });
 
     return res.data?.data || null;
