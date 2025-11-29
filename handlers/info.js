@@ -1,49 +1,42 @@
 const tokenService = require("../services/token");
-const priceService = require("../services/price");
-const axios = require("axios");
+const infoService = require("../services/info");
 
-async function infoHandler(ctx) {
+async function infoCommand(ctx) {
   try {
-    const args = ctx.message.text.split(/\s+/).slice(1);
-    const query = args.join(" ");
+    const q = ctx.message.text.split(" ").slice(1).join(" ").trim();
+    if (!q) return ctx.reply("❗ Usage: /info <token>");
 
-    if (!query) return ctx.reply("❌ Provide a token.\nExample: /info sol");
+    // Resolve name / symbol / CA
+    const token = await tokenService.resolve(q);
+    if (!token) return ctx.reply(`❌ Unknown token: "${q}"`);
 
-    // resolve symbol/name/CA
-    const token = await tokenService.resolve(query);
-    if (!token || !token.address) {
-      return ctx.reply(`❌ Unknown token: "${query}"`);
-    }
+    const mint = token.address;
 
-    // fetch price
-    const price = await priceService.getPrice(token.address);
+    // Fetch from Birdeye
+    const d = await infoService.getTokenOverview(mint);
+    if (!d) return ctx.reply("❌ Failed to fetch token overview.");
 
-    // fetch extra data from Birdeye
-    const url = `https://public-api.birdeye.so/defi/token_overview?address=${token.address}`;
-    const res = await axios.get(url, {
-      headers: { "X-API-KEY": process.env.BIRDEYE_API_KEY },
-    });
+    const price = d.price || 0;
+    const mc = d.marketCap || 0;
+    const vol = d.volume24h || 0;
+    const change = d.priceChange24h || 0;
 
-    const data = res.data?.data || {};
+    const changeEmoji = change > 0 ? "🟢" : change < 0 ? "🔴" : "⚪";
 
-    const mc = data.mc || 0;
-    const vol = data.v24hUSD || 0;
-    const change = data.pctChange24h || 0;
+    const msg =
+      `📘 *${token.symbol} — Token Overview*\n\n` +
+      `💵 *Price:* $${price.toFixed(6)}\n` +
+      `💰 *Market Cap:* $${mc.toLocaleString()}\n` +
+      `📊 *24h Volume:* $${vol.toLocaleString()}\n` +
+      `📈 *24h Change:* ${changeEmoji} ${change.toFixed(2)}%\n\n` +
+      `🧩 *CA:* \`${mint}\``;
 
-    return ctx.reply(
-      `📘 <b>${token.symbol} — Token Overview</b>\n\n` +
-      `💲 <b>Price</b>: $${(price || 0).toFixed(6)}\n` +
-      `💰 <b>Market Cap</b>: $${mc.toLocaleString()}\n` +
-      `📈 <b>24h Volume</b>: $${vol.toLocaleString()}\n` +
-      `📊 <b>24h Change</b>: ${change > 0 ? "🟢" : "🔴"} ${change}%\n\n` +
-      `🧩 <b>CA</b>:\n<code>${token.address}</code>`,
-      { parse_mode: "HTML" }
-    );
+    return ctx.reply(msg, { parse_mode: "Markdown" });
 
   } catch (err) {
-    console.error("infoHandler error:", err);
-    return ctx.reply("⚠️ Failed to fetch token info.");
+    console.error("infoCommand error:", err);
+    return ctx.reply("❌ Failed to load info.");
   }
 }
 
-module.exports = infoHandler;
+module.exports = infoCommand;
