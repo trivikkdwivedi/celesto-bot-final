@@ -1,42 +1,42 @@
 const tokenService = require("../services/token");
 const infoService = require("../services/info");
 
-async function infoCommand(ctx) {
+async function infoHandler(ctx) {
   try {
-    const q = ctx.message.text.split(" ").slice(1).join(" ").trim();
-    if (!q) return ctx.reply("❗ Usage: /info <token>");
+    const args = ctx.message.text.split(" ").slice(1);
+    const query = args.join(" ");
 
-    // Resolve name / symbol / CA
-    const token = await tokenService.resolve(q);
-    if (!token) return ctx.reply(`❌ Unknown token: "${q}"`);
+    if (!query) return ctx.reply("❗ Usage: /info <token>");
 
-    const mint = token.address;
+    const token = await tokenService.resolve(query);
+    if (!token) return ctx.reply(`❌ Unknown token: ${query}`);
 
-    // Fetch from Birdeye
-    const d = await infoService.getTokenOverview(mint);
-    if (!d) return ctx.reply("❌ Failed to fetch token overview.");
+    const d = await infoService.getTokenOverview(token.address);
+    if (!d) return ctx.reply("❌ Failed to fetch token info.");
 
     const price = d.price || 0;
     const mc = d.marketCap || 0;
     const vol = d.volume24h || 0;
     const change = d.priceChange24h || 0;
 
-    const changeEmoji = change > 0 ? "🟢" : change < 0 ? "🔴" : "⚪";
+    const emoji = change > 0 ? "🟢" : change < 0 ? "🔴" : "⚪";
 
     const msg =
-      `📘 *${token.symbol} — Token Overview*\n\n` +
+      `📘 *${token.symbol} — Token Overview*\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n\n` +
       `💵 *Price:* $${price.toFixed(6)}\n` +
       `💰 *Market Cap:* $${mc.toLocaleString()}\n` +
       `📊 *24h Volume:* $${vol.toLocaleString()}\n` +
-      `📈 *24h Change:* ${changeEmoji} ${change.toFixed(2)}%\n\n` +
-      `🧩 *CA:* \`${mint}\``;
+      `📈 *24h Change:* ${emoji} ${change.toFixed(2)}%\n\n` +
+      `🧩 *CA:* \`${token.address}\`\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━`;
 
     return ctx.reply(msg, { parse_mode: "Markdown" });
 
-  } catch (err) {
-    console.error("infoCommand error:", err);
-    return ctx.reply("❌ Failed to load info.");
+  } catch (e) {
+    console.error("infoHandler error:", e);
+    return ctx.reply("⚠️ Error fetching token info.");
   }
 }
 
-module.exports = infoCommand;
+module.exports = infoHandler;
