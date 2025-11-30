@@ -1,218 +1,216 @@
-// ================================
-// CELSTO BOT - FINAL INDEX.JS
-// WITH FLOATING QUICK ACTION MENU
-// ================================
-
 require("dotenv").config();
 const { Telegraf } = require("telegraf");
 const express = require("express");
 
-// Services
-const dbService = require("./services/db");
-const walletService = require("./services/wallet");
+// Handlers
 const priceHandler = require("./handlers/price");
-const buyHandler = require("./handlers/buy");
-const sellHandler = require("./handlers/sell");
 const infoHandler = require("./handlers/info");
 const chartHandler = require("./handlers/chart");
 
+const walletService = require("./services/wallet");
+const dbService = require("./services/db");
+
 // ENV
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
-const SOLANA_RPC = process.env.SOLANA_RPC;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 
-if (!BOT_TOKEN) throw new Error("❌ Missing TELEGRAM_BOT_TOKEN");
-if (!WEBHOOK_URL) throw new Error("❌ Missing WEBHOOK_URL");
+if (!BOT_TOKEN) {
+  console.error("❌ Missing TELEGRAM_BOT_TOKEN");
+  process.exit(1);
+}
+
+if (!WEBHOOK_URL) {
+  console.error("❌ Missing WEBHOOK_URL");
+  process.exit(1);
+}
 
 const bot = new Telegraf(BOT_TOKEN);
 
-// =========================
-// INITIALIZE SERVICES
-// =========================
+/* ---------------------------
+   START APPLICATION
+----------------------------*/
 async function startApp() {
   try {
+    // Init DB + RPC + Encryption
     await dbService.init({
-      supabaseUrl: SUPABASE_URL,
-      supabaseKey: SUPABASE_ANON_KEY,
+      supabaseUrl: process.env.SUPABASE_URL,
+      supabaseKey: process.env.SUPABASE_ANON_KEY,
     });
 
     await walletService.init({
       supabase: dbService.supabase,
-      encryptionKey: ENCRYPTION_KEY,
-      solanaRpc: SOLANA_RPC,
+      encryptionKey: process.env.ENCRYPTION_KEY,
+      solanaRpc: process.env.SOLANA_RPC,
     });
 
     console.log("Supabase initialized");
     console.log("Services initialized");
 
-    // ====================================
-    // TELEGRAM COMMAND SHORTCUTS
-    // ====================================
-    await bot.telegram.setMyCommands([
-      { command: "menu", description: "Open Quick Actions" },
-      { command: "price", description: "Get token price" },
-      { command: "chart", description: "View chart" },
-      { command: "info", description: "Token details" },
-      { command: "buy", description: "Swap tokens (Buy)" },
-      { command: "sell", description: "Swap tokens (Sell)" },
-      { command: "createwallet", description: "Create wallet" },
-      { command: "mywallet", description: "Show wallet" },
-      { command: "balance", description: "Show balance" }
-    ]);
+    /* ---------------------------
+       COMMANDS
+    ----------------------------*/
 
-    // ====================================
-    // /start
-    // ====================================
     bot.start((ctx) => {
-      const name = ctx.from?.first_name || ctx.from?.username || "User";
       ctx.reply(
-        `👋 Welcome ${name}!\nUse /menu to open quick actions.`,
+        `👋 Welcome to *Celesto Trading Bot!*\n\nUse /menu to see all commands.`,
+        { parse_mode: "Markdown" }
       );
     });
 
-    // ====================================
-    // WALLET COMMANDS
-    // ====================================
+    bot.command("menu", (ctx) => {
+      ctx.reply(
+        "📌 *Main Menu*\nChoose an option:",
+        {
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: "💰 Price", callback_data: "ask_price" },
+                { text: "ℹ Info", callback_data: "ask_info" },
+              ],
+              [
+                { text: "📈 Chart", callback_data: "ask_chart" },
+              ],
+              [
+                { text: "👛 Create Wallet", callback_data: "create_wallet" },
+                { text: "🔑 My Wallet", callback_data: "show_wallet" },
+              ],
+              [
+                { text: "💵 Balance", callback_data: "show_balance" },
+              ],
+              [
+                { text: "🛒 Buy", callback_data: "ask_buy" },
+                { text: "📤 Sell", callback_data: "ask_sell" },
+              ],
+            ],
+          },
+        }
+      );
+    });
+
+    /* ---------- Price Command ---------- */
+    bot.command("price", priceHandler);
+
+    /* ---------- Info Command ---------- */
+    bot.command("info", infoHandler);
+
+    /* ---------- Chart Command ---------- */
+    bot.command("chart", chartHandler);
+
+    /* ---------- Wallet Commands ---------- */
     bot.command("createwallet", async (ctx) => {
       try {
         const telegramId = String(ctx.from.id);
-        const existing = await walletService.getWallet(telegramId);
 
-        if (existing) {
+        const wallet = await walletService.getWallet(telegramId);
+        if (wallet) {
           return ctx.reply(
-            `⚠️ You already have a wallet:\n\`${existing.publicKey}\``,
+            `⚠️ You already have a wallet.\n\n🪪 *Public Key:* \`${wallet.publicKey}\``,
             { parse_mode: "Markdown" }
           );
         }
 
         const created = await walletService.createWallet({ ownerId: telegramId });
 
-        return ctx.reply(
-          `✅ Wallet created!\n\n🔑 Public key:\n\`${created.publicKey}\``,
+        ctx.reply(
+          `✅ *Wallet Created Successfully!*\n\n🔑 Public Key:\n\`${created.publicKey}\``,
           { parse_mode: "Markdown" }
         );
       } catch (err) {
+        console.error(err);
         ctx.reply("❌ Failed to create wallet.");
       }
     });
 
     bot.command("mywallet", async (ctx) => {
       try {
-        const w = await walletService.getWallet(String(ctx.from.id));
-        if (!w) return ctx.reply("❌ No wallet found. Use /createwallet.");
+        const wallet = await walletService.getWallet(String(ctx.from.id));
 
-        ctx.reply(`🔑 Your wallet:\n\`${w.publicKey}\``, {
-          parse_mode: "Markdown",
-        });
+        if (!wallet) {
+          return ctx.reply("❌ No wallet found. Use /createwallet first.");
+        }
+
+        ctx.reply(
+          `🔑 *Your Wallet Address:*\n\`${wallet.publicKey}\``,
+          { parse_mode: "Markdown" }
+        );
       } catch (err) {
-        ctx.reply("❌ Failed to fetch wallet.");
+        console.error(err);
+        ctx.reply("❌ Failed to get wallet.");
       }
     });
 
     bot.command("balance", async (ctx) => {
       try {
-        const w = await walletService.getWallet(String(ctx.from.id));
-        if (!w) return ctx.reply("❌ No wallet. Use /createwallet.");
+        const wallet = await walletService.getWallet(String(ctx.from.id));
 
-        const sol = await walletService.getSolBalance(w.publicKey);
-        ctx.reply(`💰 **${sol.toFixed(6)} SOL**`, { parse_mode: "Markdown" });
+        if (!wallet) {
+          return ctx.reply("❌ No wallet found. Use /createwallet.");
+        }
+
+        const sol = await walletService.getSolBalance(wallet.publicKey);
+
+        ctx.reply(
+          `💰 *Your Balance:*\n${sol.toFixed(6)} SOL`,
+          { parse_mode: "Markdown" }
+        );
       } catch (err) {
-        ctx.reply("❌ Failed to get balance.");
+        console.error(err);
+        ctx.reply("❌ Failed to fetch balance.");
       }
     });
 
-    // ====================================
-    // MAIN FEATURES
-    // ====================================
-    bot.command("price", priceHandler);
-    bot.command("chart", chartHandler);
-    bot.command("info", infoHandler);
-    bot.command("buy", buyHandler);
-    bot.command("sell", sellHandler);
+    /* ---------------------------
+       BUTTON CALLBACKS
+    ----------------------------*/
 
-    // ====================================
-    // FLOATING QUICK ACTION MENU (STYLE C)
-    // ====================================
-    bot.command("menu", (ctx) => {
-      return ctx.reply(
-        "✨ *Quick Actions Menu*\nChoose what you want:",
-        {
+    bot.on("callback_query", async (ctx) => {
+      const data = ctx.callbackQuery.data;
+
+      if (data === "ask_price") {
+        return ctx.reply("💬 Send token symbol:\nExample: `SOL`", {
           parse_mode: "Markdown",
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { text: "💰 Price", callback_data: "price_menu" },
-                { text: "📊 Chart", callback_data: "chart_menu" }
-              ],
-              [
-                { text: "ℹ️ Info", callback_data: "info_menu" }
-              ],
-              [
-                { text: "🔄 Buy", callback_data: "buy_menu" },
-                { text: "🔁 Sell", callback_data: "sell_menu" }
-              ],
-              [
-                { text: "👛 Create Wallet", callback_data: "create_wallet_menu" }
-              ],
-              [
-                { text: "🪪 My Wallet", callback_data: "mywallet_menu" },
-                { text: "💼 Balance", callback_data: "balance_menu" }
-              ]
-            ]
-          }
-        }
-      );
-    });
+        });
+      }
 
-    // ====================================
-    // CALLBACKS
-    // ====================================
-    bot.action("price_menu", (ctx) => {
+      if (data === "ask_info") {
+        return ctx.reply("ℹ Send token symbol:\nExample: `SOL`", {
+          parse_mode: "Markdown",
+        });
+      }
+
+      if (data === "ask_chart") {
+        return ctx.reply("📊 Send token symbol:\nExample: `SOL`", {
+          parse_mode: "Markdown",
+        });
+      }
+
+      if (data === "create_wallet") {
+        return ctx.reply("/createwallet");
+      }
+
+      if (data === "show_wallet") {
+        return ctx.reply("/mywallet");
+      }
+
+      if (data === "show_balance") {
+        return ctx.reply("/balance");
+      }
+
+      if (data === "ask_buy") {
+        return ctx.reply("🛒 Usage: /buy <input> <output> <amount>");
+      }
+
+      if (data === "ask_sell") {
+        return ctx.reply("📤 Usage: /sell <input> <output> <amount>");
+      }
+
       ctx.answerCbQuery();
-      ctx.reply("💰 Send: `price <token>`", { parse_mode: "Markdown" });
     });
 
-    bot.action("chart_menu", (ctx) => {
-      ctx.answerCbQuery();
-      ctx.reply("📊 Send: `chart <token>`");
-    });
-
-    bot.action("info_menu", (ctx) => {
-      ctx.answerCbQuery();
-      ctx.reply("ℹ️ Send: `info <token>`");
-    });
-
-    bot.action("buy_menu", (ctx) => {
-      ctx.answerCbQuery();
-      ctx.reply("🔄 `/buy <input> <output> <amount>`", { parse_mode: "Markdown" });
-    });
-
-    bot.action("sell_menu", (ctx) => {
-      ctx.answerCbQuery();
-      ctx.reply("🔁 `/sell <input> <output> <amount>`", { parse_mode: "Markdown" });
-    });
-
-    bot.action("create_wallet_menu", (ctx) => {
-      ctx.answerCbQuery();
-      ctx.reply("👛 Use `/createwallet`");
-    });
-
-    bot.action("mywallet_menu", (ctx) => {
-      ctx.answerCbQuery();
-      ctx.reply("🪪 Use `/mywallet`");
-    });
-
-    bot.action("balance_menu", (ctx) => {
-      ctx.answerCbQuery();
-      ctx.reply("💼 Use `/balance`");
-    });
-
-    // ====================================
-    // WEBHOOK MODE (RAILWAY)
-    // ====================================
+    /* ---------------------------
+       WEBHOOK (Railway)
+    ----------------------------*/
     const app = express();
     app.use(express.json());
 
@@ -224,14 +222,16 @@ async function startApp() {
     });
 
     const PORT = process.env.PORT || 8080;
+
     app.listen(PORT, () => {
       console.log(`🚀 Webhook server running on port ${PORT}`);
       console.log(`Webhook URL: ${WEBHOOK_URL}/bot`);
     });
 
+    console.log("Webhook set! Bot is running.");
+
   } catch (err) {
     console.error("Startup error:", err);
-    process.exit(1);
   }
 }
 
